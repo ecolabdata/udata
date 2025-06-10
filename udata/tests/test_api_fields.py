@@ -52,7 +52,7 @@ class FakeBadgeMixin(BadgeMixin):
         {"key": "followers", "value": "metrics.followers"},
         {"key": "views", "value": "metrics.views"},
     ],
-    additional_filters={"organization_badge": "organization.badges"},
+    nested_filters={"organization_badge": "organization.badges"},
 )
 class Fake(WithMetrics, FakeBadgeMixin, Owned, db.Document):
     filter_field = field(db.StringField(), filterable={"key": "filter_field_name"})
@@ -176,8 +176,8 @@ class IndexParserTest:
         """Filterable fields from mixins should have a parser arg."""
         assert set(["owner", "organization"]).issubset(self.index_parser_args_names)
 
-    def test_additional_filters_in_parser(self) -> None:
-        """Filterable fields from the `additional_filters` decorater parameter should have a parser arg."""
+    def test_nested_filters_in_parser(self) -> None:
+        """Filterable fields from the `nested_filters` decorater parameter should have a parser arg."""
         assert "organization_badge" in self.index_parser_args_names
 
     def test_pagination_fields_in_parser(self) -> None:
@@ -238,8 +238,8 @@ class ApplySortAndFiltersTest:
             assert fake1 in results
             assert fake2 not in results
 
-    def test_additional_filters(self, app) -> None:
-        """Filtering on an additional filter filters the results."""
+    def test_nested_filters(self, app) -> None:
+        """Filtering on an nested filter filters the results."""
         org_public_service: Organization = OrganizationFactory()
         org_public_service.add_badge(org_constants.PUBLIC_SERVICE)
         org_company: Organization = OrganizationFactory()
