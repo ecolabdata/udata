@@ -294,9 +294,11 @@ class ApplySortAndFiltersTest:
     def test_standalone_filters(self, app) -> None:
         """Standalone filters should be applied."""
         fake1: Fake = FakeFactory(title="foo bar")
+        fake2: Fake = FakeFactory(title="bar bar")
         with app.test_request_context("/foobar", query_string={"standalone": "foo"}):
             results: UDataQuerySet = Fake.apply_sort_filters(Fake.objects)
-            assert tuple(results) == (fake1,)
+            assert fake1 in results
+            assert fake2 not in results
 
 
 class ApplyPaginationTest:
