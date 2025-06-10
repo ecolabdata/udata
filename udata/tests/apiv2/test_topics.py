@@ -1,6 +1,7 @@
 import pytest
 from flask import url_for
 
+from udata.core.dataservices.factories import DataserviceFactory
 from udata.core.dataset.factories import DatasetFactory
 from udata.core.discussions.models import Discussion
 from udata.core.organization.factories import OrganizationFactory
@@ -430,6 +431,7 @@ class TopicElementsAPITest(APITestCase):
         topic = TopicFactory(owner=owner)
         dataset = DatasetFactory()
         reuse = ReuseFactory()
+        dataservice = DataserviceFactory()
         response = self.post(
             url_for("apiv2.topic_elements", topic=topic),
             [
@@ -448,6 +450,13 @@ class TopicElementsAPITest(APITestCase):
                     "element": {"class": "Reuse", "id": reuse.id},
                 },
                 {
+                    "title": "A dataservice",
+                    "description": "A dataservice description",
+                    "tags": ["tag1", "tag2"],
+                    "extras": {"extra": "value"},
+                    "element": {"class": "Dataservice", "id": dataservice.id},
+                },
+                {
                     "title": "An element without element",
                     "description": "An element description",
                     "tags": ["tag1", "tag2"],
@@ -458,7 +467,7 @@ class TopicElementsAPITest(APITestCase):
         )
         assert response.status_code == 201
         topic.reload()
-        assert len(topic.elements) == 6
+        assert len(topic.elements) == 7
 
         dataset_elt = next(
             elt for elt in topic.elements if elt.element and elt.element.id == dataset.id
@@ -475,6 +484,14 @@ class TopicElementsAPITest(APITestCase):
         assert reuse_elt.description == "A reuse description"
         assert reuse_elt.tags == ["tag1", "tag2"]
         assert reuse_elt.extras == {"extra": "value"}
+
+        dataservice_elt = next(
+            elt for elt in topic.elements if elt.element and elt.element.id == dataservice.id
+        )
+        assert dataservice_elt.title == "A dataservice"
+        assert dataservice_elt.description == "A dataservice description"
+        assert dataservice_elt.tags == ["tag1", "tag2"]
+        assert dataservice_elt.extras == {"extra": "value"}
 
         no_elt_elt = next(
             elt for elt in topic.elements if elt.title == "An element without element"
