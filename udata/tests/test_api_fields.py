@@ -53,6 +53,13 @@ class FakeBadgeMixin(BadgeMixin):
         {"key": "views", "value": "metrics.views"},
     ],
     nested_filters={"organization_badge": "organization.badges"},
+    standalone_filters=[
+        {
+            "key": "standalone",
+            "type": str,
+            "query": lambda base_query, value: base_query.filter(title__contains=value),
+        },
+    ],
 )
 class Fake(WithMetrics, FakeBadgeMixin, Owned, db.Document):
     filter_field = field(db.StringField(), filterable={"key": "filter_field_name"})
@@ -283,6 +290,13 @@ class ApplySortAndFiltersTest:
         with app.test_request_context("/foobar", query_string={"sort": "-datasets"}):
             results = Fake.apply_sort_filters(Fake.objects)
             assert tuple(results) == (fake2, fake1)
+
+    def test_standalone_filters(self, app) -> None:
+        """Standalone filters should be applied."""
+        fake1: Fake = FakeFactory(title="foo bar")
+        with app.test_request_context("/foobar", query_string={"standalone": "foo"}):
+            results: UDataQuerySet = Fake.apply_sort_filters(Fake.objects)
+            assert tuple(results) == (fake1,)
 
 
 class ApplyPaginationTest:
