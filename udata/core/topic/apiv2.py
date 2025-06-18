@@ -149,7 +149,10 @@ class TopicElementsAPI(API):
             previous_page += f"&q={args['q']}"
 
         if element_class:
-            pipeline.append({"$match": {"element._cls": element_class}})
+            if element_class != "None":
+                pipeline.append({"$match": {"element._cls": element_class}})
+            else:
+                pipeline.append({"$match": {"element": None}})
             next_page += f"&class={element_class}"
             previous_page += f"&class={element_class}"
 
@@ -243,6 +246,24 @@ class TopicElementsAPI(API):
 
         return topic, 201
 
+    @apiv2.secure
+    @apiv2.doc("topic_elements_delete")
+    @apiv2.response(404, "Topic not found")
+    @apiv2.response(403, "Forbidden")
+    def delete(self, topic):
+        """Delete all elements from a Topic
+
+        This a workaround for https://github.com/kvesteri/wtforms-json/issues/43
+        -> we can't use PUT /api/2/topics/{topic}/ with an empty list of elements
+        """
+        if not TopicEditPermission(topic).can():
+            apiv2.abort(403, "Forbidden")
+
+        topic.elements = []
+        topic.save()
+
+        return None, 204
+
 
 @ns.route(
     "/<topic:topic>/elements/<uuid:element_id>/",
@@ -275,7 +296,6 @@ class TopicElementAPI(API):
     @apiv2.response(404, "Topic not found")
     @apiv2.response(404, "Element not found in topic")
     @apiv2.response(204, "Success")
-    # FIXME: test the marshalling of element in this case
     def put(self, topic, element_id):
         """Update a given element from the given topic"""
         if not TopicEditPermission(topic).can():
