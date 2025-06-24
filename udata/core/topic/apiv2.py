@@ -4,6 +4,7 @@ import mongoengine
 from flask import request, url_for
 from flask_security import current_user
 
+from udata import search
 from udata.api import API, apiv2
 from udata.core.discussions.models import Discussion
 from udata.core.topic.api_fields import (
@@ -18,7 +19,8 @@ from udata.core.topic.forms import TopicElementForm, TopicForm
 from udata.core.topic.models import Topic, TopicElement
 from udata.core.topic.parsers import TopicApiParser, TopicElementsParser
 from udata.core.topic.permissions import TopicEditPermission
-from udata.utils import get_by
+from udata.core.topic.search import TopicSearch
+from udata.utils import get_by, multi_to_dict
 
 DEFAULT_SORTING = "-created_at"
 
@@ -28,6 +30,7 @@ ns = apiv2.namespace("topics", "Topics related operations")
 
 topic_parser = TopicApiParser()
 elements_parser = TopicElementsParser()
+search_parser = TopicSearch.as_request_parser()
 
 common_doc = {"params": {"topic": "The topic ID"}}
 
@@ -312,3 +315,16 @@ class TopicElementAPI(API):
         topic.update(**data)
 
         return element
+
+
+@ns.route("/search/", endpoint="topic_search")
+class TopicSearchAPI(API):
+    """Topics collection search endpoint"""
+
+    @apiv2.doc("search_topics")
+    @apiv2.expect(search_parser)
+    @apiv2.marshal_with(topic_page_fields)
+    def get(self):
+        """Search all topics"""
+        search_parser.parse_args()
+        return search.query(TopicSearch, **multi_to_dict(request.args))
