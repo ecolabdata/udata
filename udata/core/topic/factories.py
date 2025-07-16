@@ -1,6 +1,7 @@
 import factory
 
 from udata import utils
+from udata.core.dataservices.factories import DataserviceFactory
 from udata.core.dataset.factories import DatasetFactory
 from udata.core.reuse.factories import ReuseFactory
 from udata.factories import ModelFactory
@@ -37,6 +38,10 @@ class TopicElementReuseFactory(TopicElementFactory):
     element = factory.SubFactory(ReuseFactory)
 
 
+class TopicElementDataserviceFactory(TopicElementFactory):
+    element = factory.SubFactory(DataserviceFactory)
+
+
 class TopicFactory(ModelFactory):
     class Meta:
         model = Topic
@@ -48,7 +53,11 @@ class TopicFactory(ModelFactory):
 
     @factory.lazy_attribute
     def elements(self):
-        return [*TopicElementDatasetFactory.create_batch(2), TopicElementReuseFactory()]
+        return [
+            TopicElementDatasetFactory(),
+            TopicElementReuseFactory(),
+            TopicElementDataserviceFactory(),
+        ]
 
     @classmethod
     def elements_as_payload(cls, elements: list) -> dict:
