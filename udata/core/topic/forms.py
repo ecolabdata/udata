@@ -41,24 +41,35 @@ class TopicForm(ModelForm):
 
     def save(self, commit=True, **kwargs):
         """Custom save to handle TopicElement creation properly"""
-        # Handle elements manually before saving the topic
-        saved_elements = []
-        if self.elements.data:
-            for element_data in self.elements.data:
-                # Create and populate TopicElement instance
-                element_form = TopicElementForm(data=element_data)
-                if element_form.validate():
-                    element = element_form.save()  # This will save the TopicElement
-                    saved_elements.append(element)
+        # Store elements data
+        elements_data = self.elements.data
 
-        # Save the topic with the default behavior but without committing
-        topic = super().save(commit=False, **kwargs)
+        # Create topic data without elements field
+        topic_data = {k: v for k, v in self.data.items() if k != "elements"}
 
-        # Replace elements with our saved ones
-        topic.elements = saved_elements
+        # Get or create topic instance
+        if hasattr(self, "instance") and self.instance:
+            # Update existing topic
+            topic = self.instance
+            for key, value in topic_data.items():
+                setattr(topic, key, value)
+        else:
+            # Create new topic
+            topic = self.model_class(**topic_data)
 
+        # Save topic first so it can be referenced
         if commit:
             topic.save()
+
+        # Create elements and associate them with the topic
+        if elements_data:
+            for element_data in elements_data:
+                element_form = TopicElementForm(data=element_data)
+                if element_form.validate():
+                    element = element_form.save(commit=False)
+                    element.topic = topic
+                    if commit:
+                        element.save()
 
         return topic
 
