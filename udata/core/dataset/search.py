@@ -69,8 +69,8 @@ class DatasetSearch(ModelSearchAdapter):
         organization = None
         owner = None
 
-        topics = Topic.objects(
-            id__in=[elem.topic.id for elem in TopicElement.objects(element=dataset).only("topic")]
+        topic_ids = list(
+            set(te.topic.id for te in TopicElement.objects(element=dataset) if te.topic)
         )
 
         if dataset.organization:
@@ -106,7 +106,7 @@ class DatasetSearch(ModelSearchAdapter):
             "owner": str(owner.id) if owner else None,
             "format": [r.format.lower() for r in dataset.resources if r.format],
             "schema": [r.schema.name for r in dataset.resources if r.schema],
-            "topics": [str(t.id) for t in topics if topics],
+            "topics": [str(tid) for tid in topic_ids],
         }
         extras = {}
         for key, value in dataset.extras.items():

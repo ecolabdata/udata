@@ -1,7 +1,6 @@
 import logging
 
 import mongoengine
-from bson import ObjectId
 from flask import request
 from flask_security import current_user
 
@@ -19,7 +18,6 @@ from udata.core.topic.forms import TopicElementForm, TopicForm
 from udata.core.topic.models import Topic, TopicElement
 from udata.core.topic.parsers import TopicApiParser, TopicElementsParser
 from udata.core.topic.permissions import TopicEditPermission
-from udata.utils import get_by
 
 DEFAULT_SORTING = "-created_at"
 
@@ -159,7 +157,6 @@ class TopicElementsAPI(API):
             apiv2.abort(403, "Forbidden")
 
         topic.elements.delete()
-        topic.save()
 
         return None, 204
 
@@ -179,12 +176,8 @@ class TopicElementAPI(API):
         if not TopicEditPermission(topic).can():
             apiv2.abort(403, "Forbidden")
 
-        element = get_by(topic.elements, "pk", ObjectId(element_id))
-        if not element:
-            apiv2.abort(404, "Element not found in topic")
-
+        element = TopicElement.objects.get_or_404(pk=element_id)
         element.delete()
-        topic.save()
 
         return None, 204
 
@@ -200,9 +193,7 @@ class TopicElementAPI(API):
         if not TopicEditPermission(topic).can():
             apiv2.abort(403, "Forbidden")
 
-        element = get_by(topic.elements, "pk", ObjectId(element_id))
-        if not element:
-            apiv2.abort(404, "Element not found in topic")
+        element = TopicElement.objects.get_or_404(pk=element_id)
         form = apiv2.validate(TopicElementForm, element)
         form.populate_obj(element)
         element.save()

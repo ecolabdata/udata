@@ -44,7 +44,7 @@ class TopicForm(ModelForm):
         # Store elements data
         elements_data = self.elements.data
 
-        # Create topic data without elements field
+        # Create topic data without elements field (not on model)
         topic_data = {k: v for k, v in self.data.items() if k != "elements"}
 
         # Get or create topic instance
