@@ -63,13 +63,14 @@ class TopicForm(ModelForm):
         topic = super().save(commit=commit, **kwargs)
 
         # Create elements and associate them with the topic
-        if commit and elements_data:
+        if elements_data:
             for element_data in elements_data:
                 element_form = TopicElementForm(data=element_data)
                 if element_form.validate():
                     element = element_form.save(commit=False)
                     element.topic = topic
-                    element.save()
+                    if commit:
+                        element.save()
 
         return topic
 
