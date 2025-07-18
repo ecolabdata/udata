@@ -14,6 +14,7 @@ class TopicElementFactory(ModelFactory):
 
     title = factory.Faker("sentence")
     description = factory.Faker("text")
+    topic = factory.SubFactory("udata.core.topic.factories.TopicFactory")
 
     @classmethod
     def element_as_payload(cls, elt) -> dict:
@@ -46,10 +47,6 @@ class TopicFactory(ModelFactory):
     tags = factory.LazyAttribute(lambda o: [utils.unique_string(16) for _ in range(3)])
     private = False
 
-    @factory.lazy_attribute
-    def elements(self):
-        return [*TopicElementDatasetFactory.create_batch(2), TopicElementReuseFactory()]
-
     @classmethod
     def elements_as_payload(cls, elements: list) -> dict:
         return [
@@ -63,8 +60,28 @@ class TopicFactory(ModelFactory):
             for elt in elements
         ]
 
+
+class TopicWithElementsFactory(TopicFactory):
+    """Factory that creates a topic with associated elements"""
+
+    @factory.post_generation
+    def elements(self, create, extracted, **kwargs):
+        if not create:
+            return
+        # Create associated elements
+        TopicElementDatasetFactory.create_batch(2, topic=self)
+        TopicElementReuseFactory.create(topic=self)
+
     @classmethod
     def as_payload(cls) -> dict:
-        payload = cls.as_dict()
-        payload["elements"] = cls.elements_as_payload(payload["elements"])
+        # Build topic without saving
+        topic = cls.build()
+        payload = topic.to_dict()
+        # Build elements without saving, but create datasets/reuses for valid references
+        elements = [
+            TopicElementDatasetFactory.build(topic=topic, element=DatasetFactory.create()),
+            TopicElementDatasetFactory.build(topic=topic, element=DatasetFactory.create()),
+            TopicElementReuseFactory.build(topic=topic, element=ReuseFactory.create()),
+        ]
+        payload["elements"] = cls.elements_as_payload(elements)
         return payload
