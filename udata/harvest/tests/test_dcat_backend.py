@@ -452,8 +452,8 @@ class DcatBackendTest(PytestOnlyDBTestCase):
 
         datasets = {d.harvest.dct_identifier: d for d in Dataset.objects}
 
-        assert set(datasets["1"].tags).issuperset(set(["repartition-des-especes", "inspire"]))
-        assert set(datasets["2"].tags).issuperset(set(["hydrographie", "inspire"]))
+        assert set(datasets["1"].tags).issuperset({"repartition-des-especes", "inspire"})
+        assert set(datasets["2"].tags).issuperset({"hydrographie", "inspire"})
         assert "inspire" not in datasets["3"].tags
 
     def test_simple_nested_attributes(self, rmock):
@@ -683,9 +683,10 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         assert dataset.temporal_coverage is not None
         assert dataset.temporal_coverage.start == date(2004, 11, 3)
         assert dataset.temporal_coverage.end == date(2005, 3, 30)
-        assert set(dataset.tags) == set(
-            ["inspire", "biodiversity-dynamics"]
-        )  # The DCAT.theme with rdf:resource don't have labels properly defined
+        assert set(dataset.tags) == {
+            "inspire",
+            "biodiversity-dynamics",
+        }  # The DCAT.theme with rdf:resource don't have labels properly defined
 
     def test_sigoreme_xml_catalog(self, rmock):
         LicenseFactory(id="fr-lo", title="Licence ouverte / Open Licence")
@@ -993,22 +994,20 @@ class CswDcatBackendTest(PytestOnlyDBTestCase):
         assert (
             dataset.description == "Accidents corporels de la circulation en Hauts de France (2017)"
         )
-        assert set(dataset.tags) == set(
-            [
-                "donnee-ouverte",
-                "accidentologie",
-                "accident",
-                "reseaux-de-transport",
-                "accident-de-la-route",
-                "hauts-de-france",
-                "nord",
-                "pas-de-calais",
-                "oise",
-                "somme",
-                "aisne",
-                # "inspire",  TODO: the geonetwork v4 examples use broken URI as theme resources, check if this is still a problem or not
-            ]
-        )
+        assert set(dataset.tags) == {
+            "donnee-ouverte",
+            "accidentologie",
+            "accident",
+            "reseaux-de-transport",
+            "accident-de-la-route",
+            "hauts-de-france",
+            "nord",
+            "pas-de-calais",
+            "oise",
+            "somme",
+            "aisne",
+            # "inspire",  TODO: the geonetwork v4 examples use broken URI as theme resources, check if this is still a problem or not
+        }
         assert dataset.harvest.issued_at.date() == date(2017, 1, 1)
         assert dataset.harvest.created_at is None
         assert len(dataset.resources) == 1
@@ -1050,18 +1049,16 @@ class CswDcatBackendTest(PytestOnlyDBTestCase):
         assert dataset.description.startswith(
             "Part des ménages présents depuis 5 ans ou plus dans leur logement actuel"
         )
-        assert set(dataset.tags) == set(
-            [
-                "logement",
-                "institut-national-de-la-statistique-et-des-etudes-economiques",
-                "menage",
-                "population",
-                "insee",
-                "donnee-ouverte",
-                "hauts-de-france",
-                "population-et-societe",
-            ]
-        )
+        assert set(dataset.tags) == {
+            "logement",
+            "institut-national-de-la-statistique-et-des-etudes-economiques",
+            "menage",
+            "population",
+            "insee",
+            "donnee-ouverte",
+            "hauts-de-france",
+            "population-et-societe",
+        }
         assert dataset.harvest.issued_at.date() == date(2020, 9, 22)
         assert dataset.harvest.created_at is None
         # FIXME: len(resources) should be 2 but they have the same url => last wins
@@ -1275,17 +1272,15 @@ class CswIso19139DcatBackendTest(PytestOnlyDBTestCase):
             dataset.description
             == "Le présent standard de données COVADIS concerne les documents de plans locaux d'urbanisme (PLU) et les plans d'occupation des sols (POS qui valent PLU)."
         )
-        assert set(dataset.tags) == set(
-            [
-                "amenagement-urbanisme-zonages-planification",
-                "cartigny",
-                "document-durbanisme",
-                "donnees-ouvertes",
-                "plu",
-                "usage-des-sols",
-                "inspire",
-            ]
-        )
+        assert set(dataset.tags) == {
+            "amenagement-urbanisme-zonages-planification",
+            "cartigny",
+            "document-durbanisme",
+            "donnees-ouvertes",
+            "plu",
+            "usage-des-sols",
+            "inspire",
+        }
         assert dataset.harvest.issued_at.date() == date(2017, 10, 7)
         assert dataset.harvest.created_at.date() == date(2013, 3, 8)
         assert dataset.spatial.geom == {
