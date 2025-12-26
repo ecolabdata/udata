@@ -80,14 +80,12 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
         assert len(job.items) == 3
 
         datasets = {d.harvest.dct_identifier: d for d in Dataset.objects}
-
         assert len(datasets) == 3
 
         for i in "1 2 3".split():
@@ -131,8 +129,8 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         actions.run(source)
 
         datasets = {d.harvest.dct_identifier: d for d in Dataset.objects}
-
         assert len(datasets) == 3
+
         assert len(datasets["1"].resources) == 2
         assert len(datasets["2"].resources) == 2
         assert len(datasets["3"].resources) == 1
@@ -162,8 +160,8 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         actions.run(source)
 
         datasets = {d.harvest.dct_identifier: d for d in Dataset.objects}
-
         assert len(datasets) == 3
+
         assert len(datasets["3"].resources) == 1
         assert len(datasets["1"].resources) == 2
         assert len(datasets["2"].resources) == 2
@@ -179,8 +177,8 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         actions.run(source)
 
         dataservices = Dataservice.objects
-
         assert len(dataservices) == 1
+
         assert dataservices[0].title == "Explore API v2"
         assert dataservices[0].base_api_url == "https://data.paris2024.org/api/explore/v2.1/"
         assert (
@@ -223,7 +221,6 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         )
 
         actions.run(source)
-
         existing_dataservice.reload()
 
         assert len(Dataservice.objects) == 1
@@ -242,7 +239,6 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
@@ -260,6 +256,7 @@ class DcatBackendTest(PytestOnlyDBTestCase):
 
         datasets = {d.harvest.dct_identifier: d for d in Dataset.objects}
         assert len(datasets) == 8
+
         assert (
             datasets[
                 "https://www.arcgis.com/home/item.html?id=f6565516d1354383b25793e630cf3f2b&sublayer=5"
@@ -311,7 +308,6 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         actions.run(source)
 
         datasets = {d.harvest.dct_identifier: d for d in Dataset.objects}
-
         assert datasets["1"].schema is None
         resources_by_title = {resource["title"]: resource for resource in datasets["1"].resources}
 
@@ -462,7 +458,6 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="dcat", url=url, organization=OrganizationFactory())
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
@@ -493,7 +488,6 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         actions.run(source)
 
         datasets = {d.harvest.dct_identifier: d for d in Dataset.objects}
-
         assert len(datasets) == 3
         assert len(datasets["1"].resources) == 2
         assert len(datasets["2"].resources) == 2
@@ -505,7 +499,6 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
@@ -517,7 +510,6 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
@@ -530,11 +522,9 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
-
         assert job.status == "failed"
 
     def test_supported_mime_type(self, rmock):
@@ -544,11 +534,9 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
-
         assert job.status == "done"
         assert job.errors == []
         assert len(job.items) == 4
@@ -659,7 +647,9 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         url = mock_dcat(rmock, "geonetwork.xml", path="catalog.xml")
         org = OrganizationFactory()
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
+
         actions.run(source)
+
         dataset = Dataset.objects.filter(organization=org).first()
         assert dataset is not None
         assert dataset.harvest is not None
@@ -693,9 +683,10 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         url = mock_dcat(rmock, "sig.oreme.rdf")
         org = OrganizationFactory()
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
-        actions.run(source)
-        dataset = Dataset.objects.filter(organization=org).first()
 
+        actions.run(source)
+
+        dataset = Dataset.objects.filter(organization=org).first()
         assert dataset is not None
         assert dataset.frequency == UpdateFrequency.IRREGULAR
         assert "gravi" in dataset.tags  # support dcat:keyword
@@ -723,9 +714,10 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         url = mock_dcat(rmock, "datara--5a26b0f6-0ccf-46ad-ac58-734054b91977.rdf.xml")
         org = OrganizationFactory()
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
-        actions.run(source)
-        dataset = Dataset.objects.filter(organization=org).first()
 
+        actions.run(source)
+
+        dataset = Dataset.objects.filter(organization=org).first()
         assert dataset is not None
         assert len(dataset.contact_points) == 2
 
@@ -742,9 +734,10 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         url = mock_dcat(rmock, "datara--f40c3860-7236-4b30-a141-23b8ae33f7b2.rdf.xml")
         org = OrganizationFactory()
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
-        actions.run(source)
-        dataset = Dataset.objects.filter(organization=org).first()
 
+        actions.run(source)
+
+        dataset = Dataset.objects.filter(organization=org).first()
         assert dataset is not None
         assert len(dataset.contact_points) == 3
 
@@ -765,15 +758,16 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         url = mock_dcat(rmock, "udata.xml")
         org = OrganizationFactory()
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
-        actions.run(source)
 
+        actions.run(source)
         source.reload()
+
         job = source.get_last_job()
         assert len(job.items) == 3
 
         assert Dataset.objects.filter(organization=org).count() == 2
-        dataset = Dataset.objects.filter(organization=org, title="Bureaux de vote - Vanves").first()
 
+        dataset = Dataset.objects.filter(organization=org, title="Bureaux de vote - Vanves").first()
         assert dataset is not None
         assert "bureaux-de-vote" in dataset.tags  # support dcat:keyword
         assert len(dataset.resources) == 4
@@ -833,6 +827,7 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         get_mock = rmock.get(url)
         org = OrganizationFactory()
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
+
         actions.run(source)
 
         assert "User-Agent" in get_mock.last_request.headers
@@ -845,14 +840,11 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
-
         assert job.status == "failed"
         assert len(job.errors) == 1
-
         error = job.errors[0]
         assert error.message == 'Unsupported mime type "text/html"'
 
@@ -863,14 +855,11 @@ class DcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="dcat", url=url, organization=org)
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
-
         assert job.status == "failed"
         assert len(job.errors) == 1
-
         error = job.errors[0]
         expected = "Unable to detect format from extension or mime type"
         assert error.message == expected
@@ -900,8 +889,8 @@ class DcatBackendTest(PytestOnlyDBTestCase):
             URIS_TO_REPLACE,
             {},  # Empty dict to test the mechanism exists
         )
-        actions.run(source)
 
+        actions.run(source)
         source.reload()
 
         job = source.get_last_job()
@@ -985,7 +974,6 @@ class CswDcatBackendTest(PytestOnlyDBTestCase):
         assert len(job.items) == 6
 
         datasets = {d.harvest.dct_identifier: d for d in Dataset.objects}
-
         assert len(datasets) == 6
 
         # First dataset
@@ -1094,10 +1082,9 @@ class CswDcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="csw-dcat")
 
         actions.run(source)
-
         source.reload()
-        job = source.get_last_job()
 
+        job = source.get_last_job()
         assert len(job.errors) == 1
         assert "Failed to query CSW" in job.errors[0].message
         assert job.status == "failed"
@@ -1128,10 +1115,9 @@ class CswDcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="csw-dcat")
 
         actions.run(source)
-
         source.reload()
-        job = source.get_last_job()
 
+        job = source.get_last_job()
         assert job.status == "done"
         assert Dataset.objects.first().title == "test"
 
@@ -1160,10 +1146,9 @@ class CswDcatBackendTest(PytestOnlyDBTestCase):
         source = HarvestSourceFactory(backend="csw-dcat")
 
         actions.run(source)
-
         source.reload()
-        job = source.get_last_job()
 
+        job = source.get_last_job()
         assert not any(h.method == "GET" for h in rmock.request_history)
         assert job.status == "done"
         assert len(job.items) == 1
@@ -1211,6 +1196,7 @@ class CswDcatBackendTest(PytestOnlyDBTestCase):
 
         actions.run(source)
         source.reload()
+
         job = source.get_last_job()
         assert len(job.items) == 1
 
@@ -1252,14 +1238,12 @@ class CswIso19139DcatBackendTest(PytestOnlyDBTestCase):
         )
 
         actions.run(source)
-
         source.reload()
 
         job = source.get_last_job()
         assert len(job.items) == 6
 
         datasets = {d.harvest.dct_identifier: d for d in Dataset.objects}
-
         assert len(datasets) == 6
 
         # First dataset
