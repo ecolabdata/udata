@@ -562,13 +562,21 @@ class ReuseSearchAdapterTest(APITestCase):
 
 class ConfigurableSizeFacetsTest(APITestCase):
     def test_facet_size_params_in_request_parser(self):
+        from udata_search_service.search_clients import TermsFacet
+
         for adapter in [DatasetSearch, ReuseSearch, DataserviceSearch]:
             parser = adapter.as_request_parser()
             arg_names = [arg.name for arg in parser.args]
-            assert "facet_size__organization_id_with_name" in arg_names, (
-                f"{adapter.__name__} parser is missing facet_size__organization_id_with_name — "
-                f"it would be silently dropped from API requests"
-            )
+            expected = [
+                f"facet_size__{f.name}"
+                for f in adapter.service_class.facets
+                if isinstance(f, TermsFacet)
+            ]
+            for expected_arg in expected:
+                assert expected_arg in arg_names, (
+                    f"{adapter.__name__} parser is missing {expected_arg} — "
+                    f"it would be silently dropped from API requests"
+                )
 
     def test_facet_size_param_is_int(self):
         parser = DatasetSearch.as_request_parser()

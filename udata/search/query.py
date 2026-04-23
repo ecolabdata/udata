@@ -49,7 +49,9 @@ class SearchQuery:
         self._facet_sizes = {}
         for key in [k for k in list(params.keys()) if k.startswith("facet_size__")]:
             facet_name = key[len("facet_size__") :]
-            self._facet_sizes[facet_name] = parse_facet_size(key, params.pop(key), max_facet_size)
+            raw = params.pop(key)
+            if raw is not None:
+                self._facet_sizes[facet_name] = parse_facet_size(key, raw, max_facet_size)
         self._filters = {}
         self.extract_filters(params)
 

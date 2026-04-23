@@ -1,4 +1,5 @@
 import logging
+from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import List, Optional, Tuple
 
@@ -29,6 +30,72 @@ from udata_search_service.entities import (
 )
 
 log = logging.getLogger(__name__)
+
+
+@dataclass
+class TermsFacet:
+    name: str
+    es_field: str
+
+
+@dataclass
+class DateRangeFacet:
+    name: str
+    es_field: str
+
+
+DATE_RANGES = [
+    {"key": "last_30_days", "from": "now-30d/d"},
+    {"key": "last_12_months", "from": "now-12M/d"},
+    {"key": "last_3_years", "from": "now-3y/d"},
+]
+
+
+def _parse_filtered_facets(aggregations, facets: list) -> dict:
+    """Parse ES aggregations built with the filter-wrapper pattern into a facets dict."""
+    result = {}
+    for facet in facets:
+        if isinstance(facet, TermsFacet):
+            filtered_name = f"{facet.name}_filtered"
+            total_name = f"{facet.name}_total"
+            if hasattr(aggregations, filtered_name):
+                fa = getattr(aggregations, filtered_name)
+                if hasattr(fa, facet.name):
+                    buckets = [
+                        {"name": b.key, "count": b.doc_count}
+                        for b in getattr(fa, facet.name).buckets
+                    ]
+                    total = int(fa.total.value) if hasattr(fa, "total") else 0
+                    result[facet.name] = [{"name": "all", "count": total}] + buckets
+            elif hasattr(aggregations, facet.name):
+                buckets = [
+                    {"name": b.key, "count": b.doc_count}
+                    for b in getattr(aggregations, facet.name).buckets
+                ]
+                total = (
+                    int(getattr(aggregations, total_name).value)
+                    if hasattr(aggregations, total_name)
+                    else 0
+                )
+                result[facet.name] = [{"name": "all", "count": total}] + buckets
+        elif isinstance(facet, DateRangeFacet):
+            if hasattr(aggregations, "last_update_filtered"):
+                fa = aggregations.last_update_filtered
+                buckets = [{"name": b.key, "count": b.doc_count} for b in fa.last_update.buckets]
+                total = int(fa.total.value) if hasattr(fa, "total") else 0
+                result["last_update"] = [{"name": "all", "count": total}] + buckets
+            elif hasattr(aggregations, "last_update"):
+                buckets = [
+                    {"name": b.key, "count": b.doc_count} for b in aggregations.last_update.buckets
+                ]
+                total = (
+                    int(aggregations.last_update_total.value)
+                    if hasattr(aggregations, "last_update_total")
+                    else 0
+                )
+                result["last_update"] = [{"name": "all", "count": total}] + buckets
+    return result
+
 
 SEARCH_SYNONYMS = [
     "AMD, administrateur ministériel des données, AMDAC",
@@ -327,6 +394,7 @@ class ElasticClient:
         filters: dict,
         sort: Optional[str] = None,
         facet_sizes: dict = {},
+        facets: list = [],
     ) -> Tuple[int, List[dict], dict]:
         search = SearchableOrganization.search()
 
@@ -383,12 +451,11 @@ class ElasticClient:
                 )
             )
 
-        search.aggs.bucket(
-            "producer_type",
-            "terms",
-            field="producer_type",
-            size=facet_sizes.get("producer_type", 50),
-        )
+        for facet in facets:
+            if isinstance(facet, TermsFacet):
+                search.aggs.bucket(
+                    facet.name, "terms", field=facet.es_field, size=facet_sizes.get(facet.name, 50)
+                )
         search.aggs.metric("total_count", "cardinality", field="_id")
 
         if post_filters:
@@ -408,23 +475,22 @@ class ElasticClient:
             )
         res = [hit.to_dict(skip_empty=False) for hit in response.hits]
 
-        facets = {}
+        facets_result = {}
         if hasattr(response, "aggregations"):
             total_count = (
                 int(response.aggregations.total_count.value)
                 if hasattr(response.aggregations, "total_count")
                 else 0
             )
-
-            for agg_name in ["producer_type"]:
-                if hasattr(response.aggregations, agg_name):
+            for facet in facets:
+                if isinstance(facet, TermsFacet) and hasattr(response.aggregations, facet.name):
                     buckets = [
-                        {"name": bucket.key, "count": bucket.doc_count}
-                        for bucket in response.aggregations[agg_name].buckets
+                        {"name": b.key, "count": b.doc_count}
+                        for b in response.aggregations[facet.name].buckets
                     ]
-                    facets[agg_name] = [{"name": "all", "count": total_count}] + buckets
+                    facets_result[facet.name] = [{"name": "all", "count": total_count}] + buckets
 
-        return results_number, res, facets
+        return results_number, res, facets_result
 
     def query_topics(
         self,
@@ -434,6 +500,7 @@ class ElasticClient:
         filters: dict,
         sort: Optional[str] = None,
         facet_sizes: dict = {},
+        facets: list = [],
     ) -> Tuple[int, List[dict], dict]:
         search = SearchableTopic.search()
 
@@ -505,87 +572,34 @@ class ElasticClient:
                     filters_list.append(filter_dict[key])
             return filters_list
 
-        tag_filters = get_filters_except("tag")
-        if tag_filters:
-            tag_agg = search.aggs.bucket(
-                "tag_filtered", "filter", filter=query.Bool(must=tag_filters)
-            )
-            tag_agg.bucket("tag", "terms", field="tags", size=facet_sizes.get("tag", 50))
-            tag_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket("tag", "terms", field="tags", size=facet_sizes.get("tag", 50))
-            search.aggs.metric("tag_total", "cardinality", field="_id")
-
-        org_filters = get_filters_except("organization_id_with_name")
-        if org_filters:
-            org_agg = search.aggs.bucket(
-                "organization_id_with_name_filtered", "filter", filter=query.Bool(must=org_filters)
-            )
-            org_agg.bucket(
-                "organization_id_with_name",
-                "terms",
-                field="organization_with_id",
-                size=facet_sizes.get("organization_id_with_name", 50),
-            )
-            org_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "organization_id_with_name",
-                "terms",
-                field="organization_with_id",
-                size=facet_sizes.get("organization_id_with_name", 50),
-            )
-            search.aggs.metric("organization_id_with_name_total", "cardinality", field="_id")
-
-        producer_filters = get_filters_except("producer_type")
-        if producer_filters:
-            producer_agg = search.aggs.bucket(
-                "producer_type_filtered", "filter", filter=query.Bool(must=producer_filters)
-            )
-            producer_agg.bucket(
-                "producer_type",
-                "terms",
-                field="producer_type",
-                size=facet_sizes.get("producer_type", 50),
-            )
-            producer_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "producer_type",
-                "terms",
-                field="producer_type",
-                size=facet_sizes.get("producer_type", 50),
-            )
-            search.aggs.metric("producer_type_total", "cardinality", field="_id")
-
-        last_update_filters = get_filters_except("last_update_range")
-        if last_update_filters:
-            last_update_agg = search.aggs.bucket(
-                "last_update_filtered", "filter", filter=query.Bool(must=last_update_filters)
-            )
-            last_update_agg.bucket(
-                "last_update",
-                "date_range",
-                field="last_modified",
-                ranges=[
-                    {"key": "last_30_days", "from": "now-30d/d"},
-                    {"key": "last_12_months", "from": "now-12M/d"},
-                    {"key": "last_3_years", "from": "now-3y/d"},
-                ],
-            )
-            last_update_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "last_update",
-                "date_range",
-                field="last_modified",
-                ranges=[
-                    {"key": "last_30_days", "from": "now-30d/d"},
-                    {"key": "last_12_months", "from": "now-12M/d"},
-                    {"key": "last_3_years", "from": "now-3y/d"},
-                ],
-            )
-            search.aggs.metric("last_update_total", "cardinality", field="_id")
+        for facet in facets:
+            if isinstance(facet, TermsFacet):
+                size = facet_sizes.get(facet.name, 50)
+                f = get_filters_except(facet.name)
+                if f:
+                    agg = search.aggs.bucket(
+                        f"{facet.name}_filtered", "filter", filter=query.Bool(must=f)
+                    )
+                    agg.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                    agg.metric("total", "cardinality", field="_id")
+                else:
+                    search.aggs.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                    search.aggs.metric(f"{facet.name}_total", "cardinality", field="_id")
+            elif isinstance(facet, DateRangeFacet):
+                f = get_filters_except("last_update_range")
+                if f:
+                    agg = search.aggs.bucket(
+                        "last_update_filtered", "filter", filter=query.Bool(must=f)
+                    )
+                    agg.bucket(
+                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                    )
+                    agg.metric("total", "cardinality", field="_id")
+                else:
+                    search.aggs.bucket(
+                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                    )
+                    search.aggs.metric("last_update_total", "cardinality", field="_id")
 
         post_filters = []
         for key, value in filter_dict.items():
@@ -619,44 +633,11 @@ class ElasticClient:
             )
         res = [hit.to_dict(skip_empty=False) for hit in response.hits]
 
-        facets = {}
+        facets_result = {}
         if hasattr(response, "aggregations"):
-            facet_configs = [
-                ("tag", "tag_filtered", "tag_total"),
-                (
-                    "organization_id_with_name",
-                    "organization_id_with_name_filtered",
-                    "organization_id_with_name_total",
-                ),
-                ("producer_type", "producer_type_filtered", "producer_type_total"),
-                ("last_update", "last_update_filtered", "last_update_total"),
-            ]
+            facets_result = _parse_filtered_facets(response.aggregations, facets)
 
-            for facet_name, filtered_name, total_name in facet_configs:
-                if hasattr(response.aggregations, filtered_name):
-                    filtered_agg = getattr(response.aggregations, filtered_name)
-                    if hasattr(filtered_agg, facet_name):
-                        buckets = [
-                            {"name": bucket.key, "count": bucket.doc_count}
-                            for bucket in getattr(filtered_agg, facet_name).buckets
-                        ]
-                        total_count = (
-                            int(filtered_agg.total.value) if hasattr(filtered_agg, "total") else 0
-                        )
-                        facets[facet_name] = [{"name": "all", "count": total_count}] + buckets
-                elif hasattr(response.aggregations, facet_name):
-                    buckets = [
-                        {"name": bucket.key, "count": bucket.doc_count}
-                        for bucket in getattr(response.aggregations, facet_name).buckets
-                    ]
-                    total_count = (
-                        int(getattr(response.aggregations, total_name).value)
-                        if hasattr(response.aggregations, total_name)
-                        else 0
-                    )
-                    facets[facet_name] = [{"name": "all", "count": total_count}] + buckets
-
-        return results_number, res, facets
+        return results_number, res, facets_result
 
     def query_datasets(
         self,
@@ -666,6 +647,7 @@ class ElasticClient:
         filters: dict,
         sort: Optional[str] = None,
         facet_sizes: dict = {},
+        facets: list = [],
     ) -> Tuple[int, List[dict], dict]:
         search = SearchableDataset.search()
 
@@ -841,220 +823,34 @@ class ElasticClient:
                     filters_list.append(filter_dict[key])
             return filters_list
 
-        format_filters = get_filters_except("format_family")
-        if format_filters:
-            format_agg = search.aggs.bucket(
-                "format_family_filtered", "filter", filter=query.Bool(must=format_filters)
-            )
-            format_agg.bucket(
-                "format_family",
-                "terms",
-                field="format_family",
-                size=facet_sizes.get("format_family", 50),
-            )
-            format_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "format_family",
-                "terms",
-                field="format_family",
-                size=facet_sizes.get("format_family", 50),
-            )
-            search.aggs.metric("format_family_total", "cardinality", field="_id")
-
-        access_filters = get_filters_except("access_type")
-        if access_filters:
-            access_agg = search.aggs.bucket(
-                "access_type_filtered", "filter", filter=query.Bool(must=access_filters)
-            )
-            access_agg.bucket(
-                "access_type", "terms", field="access_type", size=facet_sizes.get("access_type", 50)
-            )
-            access_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "access_type", "terms", field="access_type", size=facet_sizes.get("access_type", 50)
-            )
-            search.aggs.metric("access_type_total", "cardinality", field="_id")
-
-        producer_filters = get_filters_except("producer_type")
-        if producer_filters:
-            producer_agg = search.aggs.bucket(
-                "producer_type_filtered", "filter", filter=query.Bool(must=producer_filters)
-            )
-            producer_agg.bucket(
-                "producer_type",
-                "terms",
-                field="producer_type",
-                size=facet_sizes.get("producer_type", 50),
-            )
-            producer_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "producer_type",
-                "terms",
-                field="producer_type",
-                size=facet_sizes.get("producer_type", 50),
-            )
-            search.aggs.metric("producer_type_total", "cardinality", field="_id")
-
-        org_name_filters = get_filters_except("organization_id_with_name")
-        if org_name_filters:
-            org_name_agg = search.aggs.bucket(
-                "organization_id_with_name_filtered",
-                "filter",
-                filter=query.Bool(must=org_name_filters),
-            )
-            org_name_agg.bucket(
-                "organization_id_with_name",
-                "terms",
-                field="organization_with_id",
-                size=facet_sizes.get("organization_id_with_name", 50),
-            )
-            org_name_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "organization_id_with_name",
-                "terms",
-                field="organization_with_id",
-                size=facet_sizes.get("organization_id_with_name", 50),
-            )
-            search.aggs.metric("organization_id_with_name_total", "cardinality", field="_id")
-
-        last_update_filters = get_filters_except("last_update_range")
-        if last_update_filters:
-            last_update_agg = search.aggs.bucket(
-                "last_update_filtered", "filter", filter=query.Bool(must=last_update_filters)
-            )
-            last_update_agg.bucket(
-                "last_update",
-                "date_range",
-                field="last_update",
-                ranges=[
-                    {"key": "last_30_days", "from": "now-30d/d"},
-                    {"key": "last_12_months", "from": "now-12M/d"},
-                    {"key": "last_3_years", "from": "now-3y/d"},
-                ],
-            )
-            last_update_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "last_update",
-                "date_range",
-                field="last_update",
-                ranges=[
-                    {"key": "last_30_days", "from": "now-30d/d"},
-                    {"key": "last_12_months", "from": "now-12M/d"},
-                    {"key": "last_3_years", "from": "now-3y/d"},
-                ],
-            )
-            search.aggs.metric("last_update_total", "cardinality", field="_id")
-
-        tag_filters = get_filters_except("tag")
-        if tag_filters:
-            tag_agg = search.aggs.bucket(
-                "tag_filtered", "filter", filter=query.Bool(must=tag_filters)
-            )
-            tag_agg.bucket("tag", "terms", field="tags", size=facet_sizes.get("tag", 50))
-            tag_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket("tag", "terms", field="tags", size=facet_sizes.get("tag", 50))
-            search.aggs.metric("tag_total", "cardinality", field="_id")
-
-        license_filters = get_filters_except("license")
-        if license_filters:
-            license_agg = search.aggs.bucket(
-                "license_filtered", "filter", filter=query.Bool(must=license_filters)
-            )
-            license_agg.bucket(
-                "license", "terms", field="license", size=facet_sizes.get("license", 50)
-            )
-            license_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "license", "terms", field="license", size=facet_sizes.get("license", 50)
-            )
-            search.aggs.metric("license_total", "cardinality", field="_id")
-
-        format_filters = get_filters_except("format")
-        if format_filters:
-            format_agg = search.aggs.bucket(
-                "format_filtered", "filter", filter=query.Bool(must=format_filters)
-            )
-            format_agg.bucket("format", "terms", field="format", size=facet_sizes.get("format", 50))
-            format_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "format", "terms", field="format", size=facet_sizes.get("format", 50)
-            )
-            search.aggs.metric("format_total", "cardinality", field="_id")
-
-        schema_filters = get_filters_except("schema")
-        if schema_filters:
-            schema_agg = search.aggs.bucket(
-                "schema_filtered", "filter", filter=query.Bool(must=schema_filters)
-            )
-            schema_agg.bucket("schema", "terms", field="schema", size=facet_sizes.get("schema", 50))
-            schema_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "schema", "terms", field="schema", size=facet_sizes.get("schema", 50)
-            )
-            search.aggs.metric("schema_total", "cardinality", field="_id")
-
-        geozone_filters = get_filters_except("geozone")
-        if geozone_filters:
-            geozone_agg = search.aggs.bucket(
-                "geozone_filtered", "filter", filter=query.Bool(must=geozone_filters)
-            )
-            geozone_agg.bucket(
-                "geozone", "terms", field="geozones", size=facet_sizes.get("geozone", 50)
-            )
-            geozone_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "geozone", "terms", field="geozones", size=facet_sizes.get("geozone", 50)
-            )
-            search.aggs.metric("geozone_total", "cardinality", field="_id")
-
-        granularity_filters = get_filters_except("granularity")
-        if granularity_filters:
-            granularity_agg = search.aggs.bucket(
-                "granularity_filtered", "filter", filter=query.Bool(must=granularity_filters)
-            )
-            granularity_agg.bucket(
-                "granularity", "terms", field="granularity", size=facet_sizes.get("granularity", 50)
-            )
-            granularity_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "granularity", "terms", field="granularity", size=facet_sizes.get("granularity", 50)
-            )
-            search.aggs.metric("granularity_total", "cardinality", field="_id")
-
-        badge_filters = get_filters_except("badge")
-        if badge_filters:
-            badge_agg = search.aggs.bucket(
-                "badge_filtered", "filter", filter=query.Bool(must=badge_filters)
-            )
-            badge_agg.bucket("badge", "terms", field="badges", size=facet_sizes.get("badge", 50))
-            badge_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket("badge", "terms", field="badges", size=facet_sizes.get("badge", 50))
-            search.aggs.metric("badge_total", "cardinality", field="_id")
-
-        topics_filters = get_filters_except("topics")
-        if topics_filters:
-            topics_agg = search.aggs.bucket(
-                "topics_filtered", "filter", filter=query.Bool(must=topics_filters)
-            )
-            topics_agg.bucket("topics", "terms", field="topics", size=facet_sizes.get("topics", 50))
-            topics_agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "topics", "terms", field="topics", size=facet_sizes.get("topics", 50)
-            )
-            search.aggs.metric("topics_total", "cardinality", field="_id")
+        for facet in facets:
+            if isinstance(facet, TermsFacet):
+                size = facet_sizes.get(facet.name, 50)
+                f = get_filters_except(facet.name)
+                if f:
+                    agg = search.aggs.bucket(
+                        f"{facet.name}_filtered", "filter", filter=query.Bool(must=f)
+                    )
+                    agg.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                    agg.metric("total", "cardinality", field="_id")
+                else:
+                    search.aggs.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                    search.aggs.metric(f"{facet.name}_total", "cardinality", field="_id")
+            elif isinstance(facet, DateRangeFacet):
+                f = get_filters_except("last_update_range")
+                if f:
+                    agg = search.aggs.bucket(
+                        "last_update_filtered", "filter", filter=query.Bool(must=f)
+                    )
+                    agg.bucket(
+                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                    )
+                    agg.metric("total", "cardinality", field="_id")
+                else:
+                    search.aggs.bucket(
+                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                    )
+                    search.aggs.metric("last_update_total", "cardinality", field="_id")
 
         post_filters = []
         for key, value in filter_dict.items():
@@ -1080,53 +876,11 @@ class ElasticClient:
             )
         res = [hit.to_dict(skip_empty=False) for hit in response.hits]
 
-        facets = {}
+        facets_result = {}
         if hasattr(response, "aggregations"):
-            facet_configs = [
-                ("format_family", "format_family_filtered", "format_family_total"),
-                ("access_type", "access_type_filtered", "access_type_total"),
-                ("producer_type", "producer_type_filtered", "producer_type_total"),
-                (
-                    "organization_id_with_name",
-                    "organization_id_with_name_filtered",
-                    "organization_id_with_name_total",
-                ),
-                ("last_update", "last_update_filtered", "last_update_total"),
-                ("tag", "tag_filtered", "tag_total"),
-                ("license", "license_filtered", "license_total"),
-                ("format", "format_filtered", "format_total"),
-                ("schema", "schema_filtered", "schema_total"),
-                ("geozone", "geozone_filtered", "geozone_total"),
-                ("granularity", "granularity_filtered", "granularity_total"),
-                ("badge", "badge_filtered", "badge_total"),
-                ("topics", "topics_filtered", "topics_total"),
-            ]
+            facets_result = _parse_filtered_facets(response.aggregations, facets)
 
-            for facet_name, filtered_name, total_name in facet_configs:
-                if hasattr(response.aggregations, filtered_name):
-                    filtered_agg = getattr(response.aggregations, filtered_name)
-                    if hasattr(filtered_agg, facet_name):
-                        buckets = [
-                            {"name": bucket.key, "count": bucket.doc_count}
-                            for bucket in getattr(filtered_agg, facet_name).buckets
-                        ]
-                        total_count = (
-                            int(filtered_agg.total.value) if hasattr(filtered_agg, "total") else 0
-                        )
-                        facets[facet_name] = [{"name": "all", "count": total_count}] + buckets
-                elif hasattr(response.aggregations, facet_name):
-                    buckets = [
-                        {"name": bucket.key, "count": bucket.doc_count}
-                        for bucket in getattr(response.aggregations, facet_name).buckets
-                    ]
-                    total_count = (
-                        int(getattr(response.aggregations, total_name).value)
-                        if hasattr(response.aggregations, total_name)
-                        else 0
-                    )
-                    facets[facet_name] = [{"name": "all", "count": total_count}] + buckets
-
-        return results_number, res, facets
+        return results_number, res, facets_result
 
     def query_reuses(
         self,
@@ -1136,6 +890,7 @@ class ElasticClient:
         filters: dict,
         sort: Optional[str] = None,
         facet_sizes: dict = {},
+        facets: list = [],
     ) -> Tuple[int, List[dict], dict]:
         search = SearchableReuse.search()
 
@@ -1296,55 +1051,34 @@ class ElasticClient:
                     flt.append(filter_dict[k])
             return flt
 
-        facet_fields = {
-            "producer_type": ("producer_type", "producer_type"),
-            "organization_id_with_name": ("organization_with_id", "organization_id_with_name"),
-            "topic": ("topic", "topic"),
-            "type": ("type", "type"),
-            "tag": ("tags", "tag"),
-            "badge": ("badges", "badge"),
-        }
-
-        for facet_key, (es_field, agg_name) in facet_fields.items():
-            f = get_filters_except(facet_key)
-            if f:
-                agg = search.aggs.bucket(
-                    f"{agg_name}_filtered", "filter", filter=query.Bool(must=f)
-                )
-                agg.bucket(agg_name, "terms", field=es_field, size=facet_sizes.get(agg_name, 50))
-                agg.metric("total", "cardinality", field="_id")
-            else:
-                search.aggs.bucket(
-                    agg_name, "terms", field=es_field, size=facet_sizes.get(agg_name, 50)
-                )
-                search.aggs.metric(f"{agg_name}_total", "cardinality", field="_id")
-
-        f = get_filters_except("last_update_range")
-        if f:
-            agg = search.aggs.bucket("last_update_filtered", "filter", filter=query.Bool(must=f))
-            agg.bucket(
-                "last_update",
-                "date_range",
-                field="last_modified",
-                ranges=[
-                    {"key": "last_30_days", "from": "now-30d/d"},
-                    {"key": "last_12_months", "from": "now-12M/d"},
-                    {"key": "last_3_years", "from": "now-3y/d"},
-                ],
-            )
-            agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "last_update",
-                "date_range",
-                field="last_modified",
-                ranges=[
-                    {"key": "last_30_days", "from": "now-30d/d"},
-                    {"key": "last_12_months", "from": "now-12M/d"},
-                    {"key": "last_3_years", "from": "now-3y/d"},
-                ],
-            )
-            search.aggs.metric("last_update_total", "cardinality", field="_id")
+        for facet in facets:
+            if isinstance(facet, TermsFacet):
+                size = facet_sizes.get(facet.name, 50)
+                f = get_filters_except(facet.name)
+                if f:
+                    agg = search.aggs.bucket(
+                        f"{facet.name}_filtered", "filter", filter=query.Bool(must=f)
+                    )
+                    agg.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                    agg.metric("total", "cardinality", field="_id")
+                else:
+                    search.aggs.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                    search.aggs.metric(f"{facet.name}_total", "cardinality", field="_id")
+            elif isinstance(facet, DateRangeFacet):
+                f = get_filters_except("last_update_range")
+                if f:
+                    agg = search.aggs.bucket(
+                        "last_update_filtered", "filter", filter=query.Bool(must=f)
+                    )
+                    agg.bucket(
+                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                    )
+                    agg.metric("total", "cardinality", field="_id")
+                else:
+                    search.aggs.bucket(
+                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                    )
+                    search.aggs.metric("last_update_total", "cardinality", field="_id")
 
         post_filters = []
         for k in [
@@ -1378,50 +1112,11 @@ class ElasticClient:
 
         res = [hit.to_dict(skip_empty=False) for hit in response.hits]
 
-        facets = {}
+        facets_result = {}
+        if hasattr(response, "aggregations"):
+            facets_result = _parse_filtered_facets(response.aggregations, facets)
 
-        for facet_key, (_, agg_name) in facet_fields.items():
-            filtered_name = f"{agg_name}_filtered"
-            total_name = f"{agg_name}_total"
-
-            if hasattr(response.aggregations, filtered_name):
-                fa = getattr(response.aggregations, filtered_name)
-                buckets = [
-                    {"name": b.key, "count": b.doc_count} for b in getattr(fa, agg_name).buckets
-                ]
-                total = int(fa.total.value) if hasattr(fa, "total") else 0
-                facets[agg_name] = [{"name": "all", "count": total}] + buckets
-
-            elif hasattr(response.aggregations, agg_name):
-                buckets = [
-                    {"name": b.key, "count": b.doc_count}
-                    for b in getattr(response.aggregations, agg_name).buckets
-                ]
-                total = (
-                    int(getattr(response.aggregations, total_name).value)
-                    if hasattr(response.aggregations, total_name)
-                    else 0
-                )
-                facets[agg_name] = [{"name": "all", "count": total}] + buckets
-
-        if hasattr(response.aggregations, "last_update_filtered"):
-            fa = response.aggregations.last_update_filtered
-            buckets = [{"name": b.key, "count": b.doc_count} for b in fa.last_update.buckets]
-            total = int(fa.total.value) if hasattr(fa, "total") else 0
-            facets["last_update"] = [{"name": "all", "count": total}] + buckets
-        elif hasattr(response.aggregations, "last_update"):
-            buckets = [
-                {"name": b.key, "count": b.doc_count}
-                for b in response.aggregations.last_update.buckets
-            ]
-            total = (
-                int(response.aggregations.last_update_total.value)
-                if hasattr(response.aggregations, "last_update_total")
-                else 0
-            )
-            facets["last_update"] = [{"name": "all", "count": total}] + buckets
-
-        return results_number, res, facets
+        return results_number, res, facets_result
 
     def query_dataservices(
         self,
@@ -1431,6 +1126,7 @@ class ElasticClient:
         filters: dict,
         sort: Optional[str] = None,
         facet_sizes: dict = {},
+        facets: list = [],
     ):
         search = SearchableDataservice.search()
 
@@ -1586,55 +1282,34 @@ class ElasticClient:
                     filters_list.append(filter_dict[k])
             return filters_list
 
-        facet_fields = {
-            "access_type": ("access_type", "access_type"),
-            "producer_type": ("producer_type", "producer_type"),
-            "organization_id_with_name": ("organization_with_id", "organization_id_with_name"),
-            "tag": ("tags", "tag"),
-            "badge": ("badges", "badge"),
-        }
-
-        for facet_name, (es_field, agg_name) in facet_fields.items():
-            f = get_filters_except(facet_name)
-            if f:
-                agg = search.aggs.bucket(
-                    f"{agg_name}_filtered", "filter", filter=query.Bool(must=f)
-                )
-                agg.bucket(agg_name, "terms", field=es_field, size=facet_sizes.get(agg_name, 50))
-                agg.metric("total", "cardinality", field="_id")
-            else:
-                search.aggs.bucket(
-                    agg_name, "terms", field=es_field, size=facet_sizes.get(agg_name, 50)
-                )
-                search.aggs.metric(f"{agg_name}_total", "cardinality", field="_id")
-
-        # last_update facet
-        f = get_filters_except("last_update_range")
-        if f:
-            agg = search.aggs.bucket("last_update_filtered", "filter", filter=query.Bool(must=f))
-            agg.bucket(
-                "last_update",
-                "date_range",
-                field="metadata_modified_at",
-                ranges=[
-                    {"key": "last_30_days", "from": "now-30d/d"},
-                    {"key": "last_12_months", "from": "now-12M/d"},
-                    {"key": "last_3_years", "from": "now-3y/d"},
-                ],
-            )
-            agg.metric("total", "cardinality", field="_id")
-        else:
-            search.aggs.bucket(
-                "last_update",
-                "date_range",
-                field="metadata_modified_at",
-                ranges=[
-                    {"key": "last_30_days", "from": "now-30d/d"},
-                    {"key": "last_12_months", "from": "now-12M/d"},
-                    {"key": "last_3_years", "from": "now-3y/d"},
-                ],
-            )
-            search.aggs.metric("last_update_total", "cardinality", field="_id")
+        for facet in facets:
+            if isinstance(facet, TermsFacet):
+                size = facet_sizes.get(facet.name, 50)
+                f = get_filters_except(facet.name)
+                if f:
+                    agg = search.aggs.bucket(
+                        f"{facet.name}_filtered", "filter", filter=query.Bool(must=f)
+                    )
+                    agg.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                    agg.metric("total", "cardinality", field="_id")
+                else:
+                    search.aggs.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                    search.aggs.metric(f"{facet.name}_total", "cardinality", field="_id")
+            elif isinstance(facet, DateRangeFacet):
+                f = get_filters_except("last_update_range")
+                if f:
+                    agg = search.aggs.bucket(
+                        "last_update_filtered", "filter", filter=query.Bool(must=f)
+                    )
+                    agg.bucket(
+                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                    )
+                    agg.metric("total", "cardinality", field="_id")
+                else:
+                    search.aggs.bucket(
+                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                    )
+                    search.aggs.metric("last_update_total", "cardinality", field="_id")
 
         post_filters = []
         for k in [
@@ -1661,47 +1336,11 @@ class ElasticClient:
         results_number = response.hits.total.value
         res = [hit.to_dict(skip_empty=False) for hit in response.hits]
 
-        facets = {}
-        for facet_name, (_, agg_name) in facet_fields.items():
-            filtered_name = f"{agg_name}_filtered"
-            total_name = f"{agg_name}_total"
-            if hasattr(response.aggregations, filtered_name):
-                fa = getattr(response.aggregations, filtered_name)
-                buckets = [
-                    {"name": b.key, "count": b.doc_count} for b in getattr(fa, agg_name).buckets
-                ]
-                total = int(fa.total.value) if hasattr(fa, "total") else 0
-                facets[agg_name] = [{"name": "all", "count": total}] + buckets
-            elif hasattr(response.aggregations, agg_name):
-                buckets = [
-                    {"name": b.key, "count": b.doc_count}
-                    for b in getattr(response.aggregations, agg_name).buckets
-                ]
-                total = (
-                    int(getattr(response.aggregations, total_name).value)
-                    if hasattr(response.aggregations, total_name)
-                    else 0
-                )
-                facets[agg_name] = [{"name": "all", "count": total}] + buckets
+        facets_result = {}
+        if hasattr(response, "aggregations"):
+            facets_result = _parse_filtered_facets(response.aggregations, facets)
 
-        if hasattr(response.aggregations, "last_update_filtered"):
-            fa = response.aggregations.last_update_filtered
-            buckets = [{"name": b.key, "count": b.doc_count} for b in fa.last_update.buckets]
-            total = int(fa.total.value) if hasattr(fa, "total") else 0
-            facets["last_update"] = [{"name": "all", "count": total}] + buckets
-        elif hasattr(response.aggregations, "last_update"):
-            buckets = [
-                {"name": b.key, "count": b.doc_count}
-                for b in response.aggregations.last_update.buckets
-            ]
-            total = (
-                int(response.aggregations.last_update_total.value)
-                if hasattr(response.aggregations, "last_update_total")
-                else 0
-            )
-            facets["last_update"] = [{"name": "all", "count": total}] + buckets
-
-        return results_number, res, facets
+        return results_number, res, facets_result
 
     def find_one_organization(self, organization_id: str) -> Optional[dict]:
         try:
@@ -1780,6 +1419,8 @@ class ElasticClient:
         page_size: int,
         filters: dict,
         sort: Optional[str] = None,
+        facet_sizes: dict = {},
+        facets: list = [],
     ) -> Tuple[int, List[dict], dict]:
         search = SearchableDiscussion.search()
 
@@ -1818,17 +1459,15 @@ class ElasticClient:
         else:
             search = search.query(query.MatchAll())
 
-        search.aggs.bucket("object_type", "terms", field="subject_class", size=50)
-        search.aggs.bucket(
-            "last_update",
-            "date_range",
-            field="created_at",
-            ranges=[
-                {"key": "last_30_days", "from": "now-30d/d"},
-                {"key": "last_12_months", "from": "now-12M/d"},
-                {"key": "last_3_years", "from": "now-3y/d"},
-            ],
-        )
+        for facet in facets:
+            if isinstance(facet, TermsFacet):
+                search.aggs.bucket(
+                    facet.name, "terms", field=facet.es_field, size=facet_sizes.get(facet.name, 50)
+                )
+            elif isinstance(facet, DateRangeFacet):
+                search.aggs.bucket(
+                    "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                )
         search.aggs.metric("total_count", "cardinality", field="_id")
 
         if post_filters:
@@ -1848,23 +1487,23 @@ class ElasticClient:
             )
         res = [hit.to_dict(skip_empty=False) for hit in response.hits]
 
-        facets = {}
+        facets_result = {}
         if hasattr(response, "aggregations"):
             total_count = (
                 int(response.aggregations.total_count.value)
                 if hasattr(response.aggregations, "total_count")
                 else 0
             )
-
-            for agg_name in ["object_type", "last_update"]:
+            for facet in facets:
+                agg_name = facet.name if isinstance(facet, TermsFacet) else "last_update"
                 if hasattr(response.aggregations, agg_name):
                     buckets = [
-                        {"name": bucket.key, "count": bucket.doc_count}
-                        for bucket in response.aggregations[agg_name].buckets
+                        {"name": b.key, "count": b.doc_count}
+                        for b in response.aggregations[agg_name].buckets
                     ]
-                    facets[agg_name] = [{"name": "all", "count": total_count}] + buckets
+                    facets_result[agg_name] = [{"name": "all", "count": total_count}] + buckets
 
-        return results_number, res, facets
+        return results_number, res, facets_result
 
     def find_one_discussion(self, discussion_id: str) -> Optional[dict]:
         try:
@@ -1891,6 +1530,8 @@ class ElasticClient:
         page_size: int,
         filters: dict,
         sort: Optional[str] = None,
+        facet_sizes: dict = {},
+        facets: list = [],
     ) -> Tuple[int, List[dict], dict]:
         search = SearchablePost.search()
 
@@ -1933,16 +1574,11 @@ class ElasticClient:
         else:
             search = search.query(query.MatchAll())
 
-        search.aggs.bucket(
-            "last_update",
-            "date_range",
-            field="last_modified",
-            ranges=[
-                {"key": "last_30_days", "from": "now-30d/d"},
-                {"key": "last_12_months", "from": "now-12M/d"},
-                {"key": "last_3_years", "from": "now-3y/d"},
-            ],
-        )
+        for facet in facets:
+            if isinstance(facet, DateRangeFacet):
+                search.aggs.bucket(
+                    "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                )
         search.aggs.metric("total_count", "cardinality", field="_id")
 
         if post_filters:
@@ -1962,23 +1598,21 @@ class ElasticClient:
             )
         res = [hit.to_dict(skip_empty=False) for hit in response.hits]
 
-        facets = {}
+        facets_result = {}
         if hasattr(response, "aggregations"):
             total_count = (
                 int(response.aggregations.total_count.value)
                 if hasattr(response.aggregations, "total_count")
                 else 0
             )
+            if hasattr(response.aggregations, "last_update"):
+                buckets = [
+                    {"name": b.key, "count": b.doc_count}
+                    for b in response.aggregations.last_update.buckets
+                ]
+                facets_result["last_update"] = [{"name": "all", "count": total_count}] + buckets
 
-            for agg_name in ["last_update"]:
-                if hasattr(response.aggregations, agg_name):
-                    buckets = [
-                        {"name": bucket.key, "count": bucket.doc_count}
-                        for bucket in response.aggregations[agg_name].buckets
-                    ]
-                    facets[agg_name] = [{"name": "all", "count": total_count}] + buckets
-
-        return results_number, res, facets
+        return results_number, res, facets_result
 
     def find_one_post(self, post_id: str) -> Optional[dict]:
         try:

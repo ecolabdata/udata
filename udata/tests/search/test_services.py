@@ -28,6 +28,13 @@ def test_empty_facet_sizes_when_not_provided():
     assert kwargs["facet_sizes"] == {}
 
 
+def test_facets_list_passed_to_client_query():
+    service, mock_client = make_service()
+    service.search(base_filters())
+    _, kwargs = mock_client.query_datasets.call_args
+    assert kwargs["facets"] == DatasetService.facets
+
+
 def test_facet_sizes_not_passed_as_filter():
     service, mock_client = make_service()
     filters = {**base_filters(), "facet_sizes": {"tag": 100}}

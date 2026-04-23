@@ -83,7 +83,6 @@ class DataserviceSearch(ModelSearchAdapter):
     model = Dataservice
     service_class = DataserviceService
     consumer_class = DataserviceConsumer
-    configurable_size_facets = ["organization_id_with_name"]
 
     sorts = {"created": "created_at", "views": "views", "followers": "followers"}
 
