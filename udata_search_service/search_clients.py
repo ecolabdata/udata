@@ -51,6 +51,35 @@ DATE_RANGES = [
 ]
 
 
+def _build_facet_aggregations(search, facets: list, facet_sizes: dict, get_filters_except) -> None:
+    for facet in facets:
+        if isinstance(facet, TermsFacet):
+            size = facet_sizes.get(facet.name, 50)
+            f = get_filters_except(facet.name)
+            if f:
+                agg = search.aggs.bucket(
+                    f"{facet.name}_filtered", "filter", filter=query.Bool(must=f)
+                )
+                agg.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                agg.metric("total", "cardinality", field="_id")
+            else:
+                search.aggs.bucket(facet.name, "terms", field=facet.es_field, size=size)
+                search.aggs.metric(f"{facet.name}_total", "cardinality", field="_id")
+        elif isinstance(facet, DateRangeFacet):
+            f = get_filters_except("last_update_range")
+            if f:
+                agg = search.aggs.bucket(
+                    "last_update_filtered", "filter", filter=query.Bool(must=f)
+                )
+                agg.bucket("last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES)
+                agg.metric("total", "cardinality", field="_id")
+            else:
+                search.aggs.bucket(
+                    "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
+                )
+                search.aggs.metric("last_update_total", "cardinality", field="_id")
+
+
 def _parse_filtered_facets(aggregations, facets: list) -> dict:
     """Parse ES aggregations built with the filter-wrapper pattern into a facets dict."""
     result = {}
@@ -572,34 +601,7 @@ class ElasticClient:
                     filters_list.append(filter_dict[key])
             return filters_list
 
-        for facet in facets:
-            if isinstance(facet, TermsFacet):
-                size = facet_sizes.get(facet.name, 50)
-                f = get_filters_except(facet.name)
-                if f:
-                    agg = search.aggs.bucket(
-                        f"{facet.name}_filtered", "filter", filter=query.Bool(must=f)
-                    )
-                    agg.bucket(facet.name, "terms", field=facet.es_field, size=size)
-                    agg.metric("total", "cardinality", field="_id")
-                else:
-                    search.aggs.bucket(facet.name, "terms", field=facet.es_field, size=size)
-                    search.aggs.metric(f"{facet.name}_total", "cardinality", field="_id")
-            elif isinstance(facet, DateRangeFacet):
-                f = get_filters_except("last_update_range")
-                if f:
-                    agg = search.aggs.bucket(
-                        "last_update_filtered", "filter", filter=query.Bool(must=f)
-                    )
-                    agg.bucket(
-                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
-                    )
-                    agg.metric("total", "cardinality", field="_id")
-                else:
-                    search.aggs.bucket(
-                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
-                    )
-                    search.aggs.metric("last_update_total", "cardinality", field="_id")
+        _build_facet_aggregations(search, facets, facet_sizes, get_filters_except)
 
         post_filters = []
         for key, value in filter_dict.items():
@@ -823,34 +825,7 @@ class ElasticClient:
                     filters_list.append(filter_dict[key])
             return filters_list
 
-        for facet in facets:
-            if isinstance(facet, TermsFacet):
-                size = facet_sizes.get(facet.name, 50)
-                f = get_filters_except(facet.name)
-                if f:
-                    agg = search.aggs.bucket(
-                        f"{facet.name}_filtered", "filter", filter=query.Bool(must=f)
-                    )
-                    agg.bucket(facet.name, "terms", field=facet.es_field, size=size)
-                    agg.metric("total", "cardinality", field="_id")
-                else:
-                    search.aggs.bucket(facet.name, "terms", field=facet.es_field, size=size)
-                    search.aggs.metric(f"{facet.name}_total", "cardinality", field="_id")
-            elif isinstance(facet, DateRangeFacet):
-                f = get_filters_except("last_update_range")
-                if f:
-                    agg = search.aggs.bucket(
-                        "last_update_filtered", "filter", filter=query.Bool(must=f)
-                    )
-                    agg.bucket(
-                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
-                    )
-                    agg.metric("total", "cardinality", field="_id")
-                else:
-                    search.aggs.bucket(
-                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
-                    )
-                    search.aggs.metric("last_update_total", "cardinality", field="_id")
+        _build_facet_aggregations(search, facets, facet_sizes, get_filters_except)
 
         post_filters = []
         for key, value in filter_dict.items():
@@ -1051,34 +1026,7 @@ class ElasticClient:
                     flt.append(filter_dict[k])
             return flt
 
-        for facet in facets:
-            if isinstance(facet, TermsFacet):
-                size = facet_sizes.get(facet.name, 50)
-                f = get_filters_except(facet.name)
-                if f:
-                    agg = search.aggs.bucket(
-                        f"{facet.name}_filtered", "filter", filter=query.Bool(must=f)
-                    )
-                    agg.bucket(facet.name, "terms", field=facet.es_field, size=size)
-                    agg.metric("total", "cardinality", field="_id")
-                else:
-                    search.aggs.bucket(facet.name, "terms", field=facet.es_field, size=size)
-                    search.aggs.metric(f"{facet.name}_total", "cardinality", field="_id")
-            elif isinstance(facet, DateRangeFacet):
-                f = get_filters_except("last_update_range")
-                if f:
-                    agg = search.aggs.bucket(
-                        "last_update_filtered", "filter", filter=query.Bool(must=f)
-                    )
-                    agg.bucket(
-                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
-                    )
-                    agg.metric("total", "cardinality", field="_id")
-                else:
-                    search.aggs.bucket(
-                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
-                    )
-                    search.aggs.metric("last_update_total", "cardinality", field="_id")
+        _build_facet_aggregations(search, facets, facet_sizes, get_filters_except)
 
         post_filters = []
         for k in [
@@ -1282,34 +1230,7 @@ class ElasticClient:
                     filters_list.append(filter_dict[k])
             return filters_list
 
-        for facet in facets:
-            if isinstance(facet, TermsFacet):
-                size = facet_sizes.get(facet.name, 50)
-                f = get_filters_except(facet.name)
-                if f:
-                    agg = search.aggs.bucket(
-                        f"{facet.name}_filtered", "filter", filter=query.Bool(must=f)
-                    )
-                    agg.bucket(facet.name, "terms", field=facet.es_field, size=size)
-                    agg.metric("total", "cardinality", field="_id")
-                else:
-                    search.aggs.bucket(facet.name, "terms", field=facet.es_field, size=size)
-                    search.aggs.metric(f"{facet.name}_total", "cardinality", field="_id")
-            elif isinstance(facet, DateRangeFacet):
-                f = get_filters_except("last_update_range")
-                if f:
-                    agg = search.aggs.bucket(
-                        "last_update_filtered", "filter", filter=query.Bool(must=f)
-                    )
-                    agg.bucket(
-                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
-                    )
-                    agg.metric("total", "cardinality", field="_id")
-                else:
-                    search.aggs.bucket(
-                        "last_update", "date_range", field=facet.es_field, ranges=DATE_RANGES
-                    )
-                    search.aggs.metric("last_update_total", "cardinality", field="_id")
+        _build_facet_aggregations(search, facets, facet_sizes, get_filters_except)
 
         post_filters = []
         for k in [
