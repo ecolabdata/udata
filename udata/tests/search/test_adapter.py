@@ -6,6 +6,7 @@ from flask_restx import inputs
 from flask_restx.reqparse import RequestParser
 
 from udata import search
+from udata.core.access_type.constants import AccessType
 from udata.core.dataservices.factories import DataserviceFactory
 from udata.core.dataservices.search import DataserviceSearch
 from udata.core.dataset.factories import (
@@ -17,6 +18,7 @@ from udata.core.dataset.models import Schema
 from udata.core.dataset.search import DatasetSearch
 from udata.core.organization.constants import (
     ASSOCIATION,
+    CERTIFIED,
     COMPANY,
     LOCAL_AUTHORITY,
     NOT_SPECIFIED,
@@ -33,6 +35,7 @@ from udata.search import as_task_param, reindex
 from udata.search.commands import finalize_reindex, index_model
 from udata.tests.api import APITestCase
 from udata.utils import clean_string
+from udata_search_service.search_clients import TermsFacet
 
 from . import FakeSearch
 
@@ -365,8 +368,6 @@ class DatasetSearchAdapterTest(APITestCase):
 
     def test_serialize_includes_access_type(self):
         """Test that DatasetSearch.serialize includes access_type in the serialized document"""
-        from udata.core.access_type.constants import AccessType
-
         dataset = DatasetFactory(access_type=AccessType.OPEN)
         serialized = DatasetSearch.serialize(dataset)
 
@@ -501,8 +502,6 @@ class DatasetSearchAdapterTest(APITestCase):
 
     def test_serialize_excludes_certified_from_producer_type(self):
         """Test that certified badge is excluded from producer_type"""
-        from udata.core.organization.constants import CERTIFIED
-
         org = OrganizationFactory()
         org.add_badge(PUBLIC_SERVICE)
         org.add_badge(CERTIFIED)
@@ -565,10 +564,16 @@ class ConfigurableSizeFacetsTest(APITestCase):
         for adapter in [DatasetSearch, ReuseSearch, DataserviceSearch]:
             parser = adapter.as_request_parser()
             arg_names = [arg.name for arg in parser.args]
-            assert "facet_size__organization_id_with_name" in arg_names, (
-                f"{adapter.__name__} parser is missing facet_size__organization_id_with_name — "
-                f"it would be silently dropped from API requests"
-            )
+            expected = [
+                f"facet_size__{f.name}"
+                for f in adapter.service_class.facets
+                if isinstance(f, TermsFacet)
+            ]
+            for expected_arg in expected:
+                assert expected_arg in arg_names, (
+                    f"{adapter.__name__} parser is missing {expected_arg} — "
+                    f"it would be silently dropped from API requests"
+                )
 
     def test_facet_size_param_is_int(self):
         parser = DatasetSearch.as_request_parser()
@@ -579,8 +584,6 @@ class ConfigurableSizeFacetsTest(APITestCase):
 class DataserviceSearchAdapterTest(APITestCase):
     def test_serialize_includes_access_type(self):
         """Test that DataserviceSearch.serialize includes access_type in the serialized document"""
-        from udata.core.access_type.constants import AccessType
-
         dataservice = DataserviceFactory(access_type=AccessType.OPEN)
         serialized = DataserviceSearch.serialize(dataservice)
 

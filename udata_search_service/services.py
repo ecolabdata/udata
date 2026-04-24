@@ -11,12 +11,17 @@ from udata_search_service.entities import (
     Reuse,
     Topic,
 )
-from udata_search_service.search_clients import ElasticClient
+from udata_search_service.search_clients import (
+    DateRangeFacet,
+    ElasticClient,
+    TermsFacet,
+)
 
 
 class BaseService:
     entity_class: type[EntityBase]
     entity_name: str
+    facets: list = []
 
     # {filter_param_name: elasticsearch_field_name}
     filter_renames: dict[str, str] = {}
@@ -45,7 +50,13 @@ class BaseService:
         self.format_filters(filters)
 
         results_number, search_results, facets = self._client_query(
-            search_text, offset, page_size, filters, sort, facet_sizes=facet_sizes
+            search_text,
+            offset,
+            page_size,
+            filters,
+            sort,
+            facet_sizes=facet_sizes,
+            facets=self.__class__.facets,
         )
         results = [self.entity_class.load_from_dict(hit) for hit in search_results]
         total_pages = ceil(results_number / page_size) or 1
@@ -84,6 +95,9 @@ class OrganizationService(BaseService):
     filter_renames = {
         "badge": "badges",
     }
+    facets = [
+        TermsFacet("producer_type", "producer_type"),
+    ]
 
 
 class DatasetService(BaseService):
@@ -98,6 +112,21 @@ class DatasetService(BaseService):
         "organization_badge": "organization_badges",
         "organization": "organization_id_with_name",
     }
+    facets = [
+        TermsFacet("format_family", "format_family"),
+        TermsFacet("access_type", "access_type"),
+        TermsFacet("producer_type", "producer_type"),
+        TermsFacet("organization_id_with_name", "organization_with_id"),
+        TermsFacet("tag", "tags"),
+        TermsFacet("license", "license"),
+        TermsFacet("format", "format"),
+        TermsFacet("schema", "schema"),
+        TermsFacet("geozone", "geozones"),
+        TermsFacet("granularity", "granularity"),
+        TermsFacet("badge", "badges"),
+        TermsFacet("topics", "topics"),
+        DateRangeFacet("last_update", "last_update"),
+    ]
 
     @classmethod
     def format_filters(cls, filters):
@@ -117,6 +146,15 @@ class ReuseService(BaseService):
         "organization_badge": "organization_badges",
         "organization": "organization_id_with_name",
     }
+    facets = [
+        TermsFacet("producer_type", "producer_type"),
+        TermsFacet("organization_id_with_name", "organization_with_id"),
+        TermsFacet("topic", "topic"),
+        TermsFacet("type", "type"),
+        TermsFacet("tag", "tags"),
+        TermsFacet("badge", "badges"),
+        DateRangeFacet("last_update", "last_modified"),
+    ]
 
 
 class DataserviceService(BaseService):
@@ -128,11 +166,25 @@ class DataserviceService(BaseService):
         "topic": "topics",
         "organization": "organization_id_with_name",
     }
+    facets = [
+        TermsFacet("access_type", "access_type"),
+        TermsFacet("producer_type", "producer_type"),
+        TermsFacet("organization_id_with_name", "organization_with_id"),
+        TermsFacet("tag", "tags"),
+        TermsFacet("badge", "badges"),
+        DateRangeFacet("last_update", "metadata_modified_at"),
+    ]
 
 
 class TopicService(BaseService):
     entity_class = Topic
     entity_name = "topic"
+    facets = [
+        TermsFacet("tag", "tags"),
+        TermsFacet("organization_id_with_name", "organization_with_id"),
+        TermsFacet("producer_type", "producer_type"),
+        DateRangeFacet("last_update", "last_modified"),
+    ]
 
 
 class DiscussionService(BaseService):
@@ -142,8 +194,15 @@ class DiscussionService(BaseService):
         "created": "created_at",
         "closed": "closed_at",
     }
+    facets = [
+        TermsFacet("object_type", "subject_class"),
+        DateRangeFacet("last_update", "created_at"),
+    ]
 
 
 class PostService(BaseService):
     entity_class = Post
     entity_name = "post"
+    facets = [
+        DateRangeFacet("last_update", "last_modified"),
+    ]
