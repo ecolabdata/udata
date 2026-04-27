@@ -51,6 +51,7 @@ IANAFORMAT = Namespace("https://www.iana.org/assignments/media-types/")
 DCT = DCTERMS  # More common usage
 VCARD = Namespace("http://www.w3.org/2006/vcard/ns#")
 GEODCAT = Namespace("http://data.europa.eu/930/")
+OGC = Namespace("http://www.opengeospatial.org/standards/")
 
 namespace_manager = NamespaceManager(Graph())
 namespace_manager.bind("adms", ADMS)
@@ -264,6 +265,11 @@ def rdf_value(obj, predicate, default=None, unwrap: list[URIRef] | None = None):
     return serialize_value(value, unwrap=unwrap) if value else default
 
 
+def vocabulary_key(uri: str, vocabulary: Namespace) -> str | None:
+    if uri.startswith(vocabulary):
+        return uri.removeprefix(vocabulary)
+
+
 def default_lang_value(obj, predicate):
     """
     Return the value with the default language if multiple Literal values exist in different languages.
@@ -310,10 +316,7 @@ def url_from_rdf(rdf, prop):
     It can be expressed in many forms as a URIRef or a Literal
     """
     value = rdf.value(prop)
-    if isinstance(value, (URIRef, Literal)):
-        return value.toPython()
-    elif isinstance(value, RdfResource):
-        return value.identifier.toPython()
+    return serialize_value(value)
 
 
 def theme_labels_from_rdf(rdf):
