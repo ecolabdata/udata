@@ -361,7 +361,7 @@ def dataset_to_rdf(dataset: Dataset, graph: Graph | None = None) -> RdfResource:
     else:
         d.set(DCT.identifier, Literal(dataset.id))
 
-    d.set(RDF.type, DCAT.Dataset)
+    d.set(RDF.type, DCAT.Dataset)  # FIXME: could be a DatasetSeries
     d.set(DCT.title, Literal(dataset.title))
     d.set(DCT.description, Literal(dataset.description))
 
@@ -853,7 +853,7 @@ def dataset_from_rdf(
     dataset = dataset or Dataset()
 
     if node is None:  # Assume first match is the only match
-        node = graph.value(predicate=RDF.type, object=DCAT.Dataset)
+        node = graph.value(predicate=RDF.type, object=DCAT.Dataset | DCAT.DatasetSeries)
 
     d = graph.resource(node)
 
