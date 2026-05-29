@@ -512,6 +512,7 @@ class CswIso19139DcatBackend(BaseCswDcatBackend):
         self.xslt_exec.set_parameter(
             "CoupledResourceLookUp", self.saxon_proc.make_string_value("disabled")
         )
+        self.xslt_exec.set_parameter("locale-prefix", self.saxon_proc.make_string_value(""))
 
     @property
     @override
