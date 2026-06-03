@@ -276,13 +276,14 @@ def to_python(literal: Literal, datatype: type[_T], default: _T | None = _MISSIN
         TypeError: cannot convert Literal("foo") to int
     """
     value = literal.toPython()
+
     if not isinstance(value, datatype):
         message = f"cannot convert {literal!r} to {datatype.__name__}"
         if default is _MISSING:
             raise TypeError(message)
-        else:
-            log.warning(message)
-            return default
+        log.warning(message)
+        return default
+
     return value
 
 
@@ -309,8 +310,10 @@ def serialize_value(value, datatype: type = str, default=None, unwrap=None):
     if isinstance(value, URIRef):
         # FIXME: raise when datatype != str
         return value.toPython()
+
     if isinstance(value, Literal):
         return to_python(value, datatype=datatype, default=default)
+
     if isinstance(value, RdfResource):
         for uriref in unwrap or []:
             if val := rdf_value(value, uriref, datatype=datatype, default=None):
