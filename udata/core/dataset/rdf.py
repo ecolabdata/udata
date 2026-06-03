@@ -54,6 +54,7 @@ from udata.rdf import (
     schema_from_rdf,
     set_harvested_date,
     themes_from_rdf,
+    to_python,
     url_from_rdf,
     vocabulary_key,
 )
@@ -468,8 +469,8 @@ def temporal_from_literal(text):
 def maybe_date_range(start, end):
     if start or end:
         return DateRange(
-            start=start.toPython() if start else None,
-            end=end.toPython() if end else None,
+            start=to_python(start, date) if start else None,
+            end=to_python(end, date) if end else None,
         )
 
 
@@ -515,10 +516,9 @@ def spatial_from_rdf(graph):
             # This may not be official in the norm but some ArcGis return
             # bbox as literal directly in DCT.spatial.
             if isinstance(term, Literal):
-                geojson = bbox_to_geojson_multipolygon(term.toPython())
+                geojson = bbox_to_geojson_multipolygon(to_python(term, str, ""))
                 if geojson is not None:
                     geojsons.append(geojson)
-
                 continue
 
             for object in term.objects():
@@ -528,7 +528,7 @@ def spatial_from_rdf(graph):
                         IANAFORMAT["application/vnd.geo+json"],  # older
                     ):
                         try:
-                            geojson = json.loads(object.toPython())
+                            geojson = json.loads(to_python(object, str, ""))
                         except ValueError as e:
                             log.warning(f"Invalid JSON in spatial GeoJSON {object.toPython()} {e}")
                             continue
@@ -538,7 +538,7 @@ def spatial_from_rdf(graph):
                     ):
                         try:
                             # .upper() si here because geomet doesn't support Polygon but only POLYGON
-                            geojson = wkt.loads(object.toPython().strip().upper())
+                            geojson = wkt.loads(to_python(object, str, "").strip().upper())
                         except ValueError as e:
                             log.warning(f"Invalid JSON in spatial WKT {object.toPython()} {e}")
                             continue
@@ -603,7 +603,7 @@ def frequency_from_rdf(term) -> UpdateFrequency | None:
         except uris.ValidationError:
             pass
     if isinstance(term, Literal):
-        term = term.toPython().lower()
+        term = to_python(term, str, "").lower()
         return FREQ_ID_TO_UDATA.get(term) or EUFREQ_ID_TO_UDATA.get(term)
     if isinstance(term, RdfResource):
         term = term.identifier

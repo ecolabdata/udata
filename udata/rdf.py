@@ -5,6 +5,7 @@ This module centralize udata-wide RDF helpers and configuration
 import logging
 import re
 from html.parser import HTMLParser
+from typing import Never, TypeVar, cast, overload
 from urllib.parse import quote
 
 import mongoengine
@@ -230,7 +231,62 @@ CONTEXT = {
 }
 
 
-def serialize_value(value, unwrap: list[URIRef] | None = None):
+_T = TypeVar("_T")
+_MISSING = cast(None, object())
+
+
+@overload
+def to_python(literal: Literal, datatype: type[_T], default: None) -> _T | None: ...
+
+
+@overload
+def to_python(literal: Literal, datatype: type[_T], default: _T) -> _T: ...
+
+
+@overload
+def to_python(literal: Literal, datatype: type[_T]) -> Never: ...
+
+
+def to_python(literal: Literal, datatype: type[_T], default: _T | None = _MISSING) -> _T | None:
+    """
+    Convert a literal to the given python datatype.
+
+    Unlike `Literal.toPython()`, this function never returns the literal itself.
+    Unlike `cast`, this function ensures the returned value has the expected datatype.
+
+    Args:
+        literal: The literal to convert.
+        datatype: The expected python datatype.
+        default: The value to return if conversion fails. Optional.
+
+    Returns:
+        The python value if successful, or `default` if conversion fails.
+
+    Raises:
+        TypeError: If conversion fails and no `default` is provided.
+
+    Examples:
+        >>> to_python(Literal(42), int, default=0)
+        42
+        >>> to_python(Literal("foo"), int, default=0)
+        0
+        >>> to_python(Literal("foo"), int, default=None)
+        None
+        >>> to_python(Literal("foo"), int)
+        TypeError: cannot convert Literal("foo") to int
+    """
+    value = literal.toPython()
+    if not isinstance(value, datatype):
+        if default is _MISSING:
+            raise TypeError(f"cannot convert {literal} to {datatype}")
+        else:
+            return default
+    return value
+
+
+def serialize_value(
+    value, default: str | None = None, unwrap: list[URIRef] | None = None
+) -> str | None:
     """
     If the value is a URIRef or a Literal, return it as a string.
     If the value is a RdfResource:
@@ -238,8 +294,10 @@ def serialize_value(value, unwrap: list[URIRef] | None = None):
           `unwrap`, and return the value of the first matching element (if any),
         - otherwise return the identifier of the RdfResource.
     """
-    if isinstance(value, (URIRef, Literal)):
+    if isinstance(value, URIRef):
         return value.toPython()
+    if isinstance(value, Literal):
+        return to_python(value, str, default)
     elif isinstance(value, RdfResource):
         for uriref in unwrap or []:
             if val := rdf_value(value, uriref):
@@ -247,22 +305,26 @@ def serialize_value(value, unwrap: list[URIRef] | None = None):
         return value.identifier.toPython()
 
 
-def rdf_unique_values(resource, predicate, unwrap: list[URIRef] | None = None) -> set[str]:
+def rdf_unique_values(
+    resource, predicate, default: str | None = None, unwrap: list[URIRef] | None = None
+) -> set[str]:
     """Returns a set of serialized values for a predicate from a RdfResource"""
     return {
         value
         for info in resource.objects(predicate=predicate)
-        if (value := serialize_value(info, unwrap=unwrap))
+        if (value := serialize_value(info, default=default, unwrap=unwrap))
     }
 
 
-def rdf_value(obj, predicate, default=None, unwrap: list[URIRef] | None = None):
+def rdf_value(
+    obj, predicate, default: str | None = None, unwrap: list[URIRef] | None = None
+) -> str | None:
     """
     Serialize the value for a predicate on a RdfResource,
     expecting one value only or (at most) one per language for Literals.
     """
     value = default_lang_value(obj, predicate)
-    return serialize_value(value, unwrap=unwrap) if value else default
+    return serialize_value(value, default=default, unwrap=unwrap) if value else default
 
 
 def vocabulary_key(uri: str, vocabulary: Namespace) -> str | None:
@@ -303,7 +365,7 @@ def is_html(text):
 
 
 def sanitize_html(text):
-    text = text.toPython() if isinstance(text, Literal) else ""
+    text = to_python(text, str, "") if isinstance(text, Literal) else ""
     if is_html(text):
         return parse_html(text)
     else:
@@ -355,19 +417,20 @@ def theme_labels_from_rdf(rdf):
                         ) or scheme_uri in INSPIRE_GEMET_SCHEME_URIS:
                             yield "inspire"
         else:
-            label = theme.toPython()
+            label = to_python(theme, str, None)
         if label:
             yield label
 
 
 def themes_from_rdf(rdf):
     tags = []
-    for tag in rdf.objects(DCAT.keyword):
-        if isinstance(tag, RdfResource):
+    for keyword in rdf.objects(DCAT.keyword):
+        if not isinstance(keyword, Literal):
             # dcat:keyword should be Literal, not a Resource/URIRef
-            log.warning(f"Ignoring dcat:keyword with URI value: {tag.identifier}")
+            log.warning(f"Ignoring dcat:keyword with URI value: {keyword.identifier}")
             continue
-        tags.append(tag.toPython())
+        if tag := to_python(keyword, str, None):
+            tags.append(tag)
     tags += theme_labels_from_rdf(rdf)
     return list(set(tags))
 
@@ -385,7 +448,7 @@ def contact_points_from_rdf(rdf, prop, role, dataset, dryrun=False):
         # Read contact point information
         if isinstance(contact_point, Literal):
             log.warning(f"Found a `Literal` inside {prop}, `foaf:Agent` or `vcard:Kind` expected.")
-            name = contact_point.toPython()
+            name = to_python(contact_point, str, None)
             email = None
             contact_form = None
         elif prop == DCAT.contactPoint:  # Could be split on the type of contact_point instead
@@ -552,8 +615,10 @@ def schema_from_rdf(rdf):
         return None
 
     schema = Schema()
-    if isinstance(resource, (URIRef, Literal)):
+    if isinstance(resource, URIRef):
         schema.url = resource.toPython()
+    elif isinstance(resource, Literal):
+        schema.url = to_python(resource, str, None)
     elif isinstance(resource, RdfResource):
         # We try to get the schema "correct" URL.
         # 1. The identifier of the DCT.conformsTo
@@ -569,13 +634,12 @@ def schema_from_rdf(rdf):
                     url = uris.validate(type.identifier.toPython())
             except uris.ValidationError:
                 pass
-
-        if url is None:
-            return None
-
         schema.url = url
         schema.name = resource.value(DCT.title)
     else:
+        return None
+
+    if schema.url is None:
         return None
 
     try:
