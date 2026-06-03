@@ -1,3 +1,5 @@
+from datetime import date
+
 from flask import current_app
 from rdflib import RDF, BNode, Graph, Literal, URIRef
 
@@ -87,9 +89,13 @@ def dataservice_from_rdf(
     dataservice.harvest.remote_url = remote_url_from_rdf(
         d, graph, remote_url_prefix=remote_url_prefix
     )
-    dataservice.harvest.created_at = rdf_value(d, DCT.created)
-    dataservice.harvest.issued_at = rdf_value(d, DCT.issued)
-    dataservice.metadata_modified_at = rdf_value(d, DCT.modified)
+    dataservice.harvest.created_at = rdf_value(d, DCT.created, date) or rdf_value(
+        d, DCT.created, str
+    )
+    dataservice.harvest.issued_at = rdf_value(d, DCT.issued, date) or rdf_value(d, DCT.issued, str)
+    dataservice.metadata_modified_at = rdf_value(d, DCT.modified, date) or rdf_value(
+        d, DCT.modified, str
+    )
 
     dataservice.tags = themes_from_rdf(d)
 

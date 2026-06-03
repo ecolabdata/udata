@@ -790,7 +790,9 @@ def resource_from_rdf(graph_or_distrib, dataset=None, is_additionnal=False):
     resource.title = title
     resource.url = url
     resource.description = sanitize_html(default_lang_value(distrib, DCT.description))
-    resource.filesize = rdf_value(distrib, DCAT.byteSize, datatype=int)
+    resource.filesize = rdf_value(distrib, DCAT.byteSize, datatype=int) or rdf_value(
+        distrib, DCAT.byteSize, datatype=str
+    )
     resource.format = format
     resource.mime = mime_from_rdf(distrib)
     schema = schema_from_rdf(distrib)
@@ -827,8 +829,8 @@ def resource_from_rdf(graph_or_distrib, dataset=None, is_additionnal=False):
 
     identifier = rdf_value(distrib, DCT.identifier)
     uri = distrib.identifier.toPython() if isinstance(distrib.identifier, URIRef) else None
-    issued_at = rdf_value(distrib, DCT.issued)
-    modified_at = rdf_value(distrib, DCT.modified)
+    issued_at = rdf_value(distrib, DCT.issued, date) or rdf_value(distrib, DCT.issued, str)
+    modified_at = rdf_value(distrib, DCT.modified, date) or rdf_value(distrib, DCT.modified, str)
 
     if not resource.harvest:
         resource.harvest = HarvestResourceMetadata()
@@ -942,9 +944,9 @@ def dataset_from_rdf(
 
     remote_url = remote_url_from_rdf(d, graph, remote_url_prefix=remote_url_prefix)
 
-    created_at = rdf_value(d, DCT.created)
-    issued_at = rdf_value(d, DCT.issued)
-    modified_at = rdf_value(d, DCT.modified)
+    created_at = rdf_value(d, DCT.created, date) or rdf_value(d, DCT.created, str)
+    issued_at = rdf_value(d, DCT.issued, date) or rdf_value(d, DCT.issued, str)
+    modified_at = rdf_value(d, DCT.modified, date) or rdf_value(d, DCT.modified, str)
 
     if not dataset.harvest:
         dataset.harvest = HarvestDatasetMetadata()
