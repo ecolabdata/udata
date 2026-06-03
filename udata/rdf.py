@@ -277,16 +277,28 @@ def to_python(literal: Literal, datatype: type[_T], default: _T | None = _MISSIN
     """
     value = literal.toPython()
     if not isinstance(value, datatype):
+        message = f"cannot convert {literal!r} to {datatype.__name__}"
         if default is _MISSING:
-            raise TypeError(f"cannot convert {literal} to {datatype}")
+            raise TypeError(message)
         else:
+            log.warning(message)
             return default
     return value
 
 
+@overload
 def serialize_value(
-    value, default: str | None = None, unwrap: list[URIRef] | None = None
-) -> str | None:
+    value, datatype: type[str] = ..., default: str | None = ..., unwrap: list[URIRef] | None = ...
+) -> str: ...
+
+
+@overload
+def serialize_value(
+    value, datatype: type[_T], default: _T | None = ..., unwrap: list[URIRef] | None = ...
+) -> _T: ...
+
+
+def serialize_value(value, datatype: type = str, default=None, unwrap=None):
     """
     If the value is a URIRef or a Literal, return it as a string.
     If the value is a RdfResource:
@@ -295,36 +307,73 @@ def serialize_value(
         - otherwise return the identifier of the RdfResource.
     """
     if isinstance(value, URIRef):
+        # FIXME: raise when datatype != str
         return value.toPython()
     if isinstance(value, Literal):
-        return to_python(value, str, default)
-    elif isinstance(value, RdfResource):
+        return to_python(value, datatype=datatype, default=default)
+    if isinstance(value, RdfResource):
         for uriref in unwrap or []:
-            if val := rdf_value(value, uriref):
+            if val := rdf_value(value, uriref, datatype=datatype, default=None):
                 return val
+        # FIXME: guard against Literal identifier => ensure toPython is str
+        # FIXME: raise when datatype != str
         return value.identifier.toPython()
 
 
+@overload
 def rdf_unique_values(
-    resource, predicate, default: str | None = None, unwrap: list[URIRef] | None = None
-) -> set[str]:
+    resource,
+    predicate,
+    datatype: type[str] = ...,
+    default: str | None = ...,
+    unwrap: list[URIRef] | None = ...,
+) -> set[str]: ...
+
+
+@overload
+def rdf_unique_values(
+    resource,
+    predicate,
+    datatype: type[_T],
+    default: _T | None = ...,
+    unwrap: list[URIRef] | None = ...,
+) -> set[_T]: ...
+
+
+def rdf_unique_values(resource, predicate, datatype: type = str, default=None, unwrap=None) -> set:
     """Returns a set of serialized values for a predicate from a RdfResource"""
     return {
         value
         for info in resource.objects(predicate=predicate)
-        if (value := serialize_value(info, default=default, unwrap=unwrap))
+        if (value := serialize_value(info, datatype=datatype, default=default, unwrap=unwrap))
     }
 
 
+@overload
 def rdf_value(
-    obj, predicate, default: str | None = None, unwrap: list[URIRef] | None = None
-) -> str | None:
+    obj,
+    predicate,
+    datatype: type[str] = ...,
+    default: str | None = ...,
+    unwrap: list[URIRef] | None = ...,
+) -> str: ...
+
+
+@overload
+def rdf_value(
+    obj, predicate, datatype: type[_T], default: _T | None = ..., unwrap: list[URIRef] | None = ...
+) -> _T: ...
+
+
+def rdf_value(obj, predicate, datatype: type = str, default=None, unwrap=None):
     """
     Serialize the value for a predicate on a RdfResource,
     expecting one value only or (at most) one per language for Literals.
     """
     value = default_lang_value(obj, predicate)
-    return serialize_value(value, default=default, unwrap=unwrap) if value else default
+    if not value:
+        return default
+    return serialize_value(value, datatype=datatype, default=default, unwrap=unwrap)
 
 
 def vocabulary_key(uri: str, vocabulary: Namespace) -> str | None:

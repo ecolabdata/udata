@@ -790,7 +790,7 @@ def resource_from_rdf(graph_or_distrib, dataset=None, is_additionnal=False):
     resource.title = title
     resource.url = url
     resource.description = sanitize_html(default_lang_value(distrib, DCT.description))
-    resource.filesize = rdf_value(distrib, DCAT.byteSize)
+    resource.filesize = rdf_value(distrib, DCAT.byteSize, datatype=int)
     resource.format = format
     resource.mime = mime_from_rdf(distrib)
     schema = schema_from_rdf(distrib)
