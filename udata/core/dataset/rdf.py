@@ -43,9 +43,11 @@ from udata.rdf import (
     SKOS,
     SPDX,
     TAG_TO_EU_HVD_CATEGORIES,
+    coerce_date,
+    coerce_int,
+    coerce_str,
     contact_points_from_rdf,
     contact_points_to_rdf,
-    default_lang_value,
     namespace_manager,
     rdf_unique_values,
     rdf_value,
@@ -54,8 +56,6 @@ from udata.rdf import (
     schema_from_rdf,
     set_harvested_date,
     themes_from_rdf,
-    to_python,
-    url_from_rdf,
     vocabulary_key,
 )
 from udata.utils import get_by, safe_harvest_datetime, safe_unicode
@@ -441,7 +441,7 @@ CHECKSUM_ALGORITHMS = {
 }
 
 
-def temporal_from_literal(text):
+def temporal_from_literal(text: str) -> DateRange | None:
     """
     Parse a temporal coverage from a literal ie. either:
     - an ISO date range
@@ -466,15 +466,7 @@ def temporal_from_literal(text):
             )
 
 
-def maybe_date_range(start, end):
-    if start or end:
-        return DateRange(
-            start=to_python(start, date) if start else None,
-            end=to_python(end, date) if end else None,
-        )
-
-
-def temporal_from_resource(resource):
+def temporal_from_resource(resource: RdfResource) -> DateRange | None:
     """
     Parse a temporal coverage from a RDF class/resource ie. either:
     - a `dct:PeriodOfTime` with schema.org `startDate` and `endDate` properties
@@ -487,18 +479,23 @@ def temporal_from_resource(resource):
         # Fetch remote ontology if necessary
         g = Graph().parse(str(resource.identifier))
         resource = g.resource(resource.identifier)
-    if range := maybe_date_range(resource.value(SCHEMA.startDate), resource.value(SCHEMA.endDate)):
-        return range
-    elif range := maybe_date_range(resource.value(DCAT.startDate), resource.value(DCAT.endDate)):
-        return range
-    elif range := maybe_date_range(resource.value(SCV.min), resource.value(SCV.max)):
-        return range
+
+    for p_start, p_end in [
+        (SCHEMA.startDate, SCHEMA.endDate),
+        (DCAT.startDate, DCAT.endDate),
+        (SCV.min, SCV.max),
+    ]:
+        start = coerce_date(resource.value(p_start))
+        end = coerce_date(resource.value(p_end))
+        if start or end:
+            return DateRange(start=start, end=end)
 
 
-def temporal_from_rdf(period_of_time):
+def temporal_from_rdf(period_of_time: Literal | RdfResource) -> DateRange | None:
     """Failsafe parsing of a temporal coverage"""
     try:
         if isinstance(period_of_time, Literal):
+            # FIXME: Literal could be a xs:date*
             return temporal_from_literal(str(period_of_time))
         elif isinstance(period_of_time, RdfResource):
             return temporal_from_resource(period_of_time)
@@ -513,10 +510,16 @@ def spatial_from_rdf(graph):
     geojsons = []
     for term in graph.objects(DCT.spatial):
         try:
+            # FIXME: can we use coerce_str with unwrap instead of term.objects()?
+            # => no because we need object.datatype to parse, which we'll lose as str
+            # FIXME: coerce_dict(term, constructor=...) with a clever constructor and unwrap!
+            # !! we don't want to coerce a IdentifiedNode, only Literal
+
             # This may not be official in the norm but some ArcGis return
             # bbox as literal directly in DCT.spatial.
             if isinstance(term, Literal):
-                geojson = bbox_to_geojson_multipolygon(to_python(term, str, ""))
+                # FIXME: from constructor we'll be able to differentiate with value.datatype
+                geojson = bbox_to_geojson_multipolygon(coerce_str(term, "") or "")  # FIXME: typing
                 if geojson is not None:
                     geojsons.append(geojson)
                 continue
@@ -528,7 +531,7 @@ def spatial_from_rdf(graph):
                         IANAFORMAT["application/vnd.geo+json"],  # older
                     ):
                         try:
-                            geojson = json.loads(to_python(object, str, ""))
+                            geojson = json.loads(coerce_str(object, "") or "")  # FIXME: typing
                         except ValueError as e:
                             log.warning(f"Invalid JSON in spatial GeoJSON {object.toPython()} {e}")
                             continue
@@ -538,7 +541,9 @@ def spatial_from_rdf(graph):
                     ):
                         try:
                             # .upper() si here because geomet doesn't support Polygon but only POLYGON
-                            geojson = wkt.loads(to_python(object, str, "").strip().upper())
+                            geojson = wkt.loads(
+                                (coerce_str(object, "") or "").strip().upper()
+                            )  # FIXME: typing
                         except ValueError as e:
                             log.warning(f"Invalid JSON in spatial WKT {object.toPython()} {e}")
                             continue
@@ -602,8 +607,9 @@ def frequency_from_rdf(term) -> UpdateFrequency | None:
             term = URIRef(uris.validate(term))
         except uris.ValidationError:
             pass
+    # FIXME: _coerce(term, UpdateFrequency, constructor = ...) with constr based on type
     if isinstance(term, Literal):
-        term = to_python(term, str, "").lower()
+        term = term.toPython().lower()
         return FREQ_ID_TO_UDATA.get(term) or EUFREQ_ID_TO_UDATA.get(term)
     if isinstance(term, RdfResource):
         term = term.identifier
@@ -611,18 +617,18 @@ def frequency_from_rdf(term) -> UpdateFrequency | None:
         return FREQ_TERM_TO_UDATA.get(term) or EUFREQ_TERM_TO_UDATA.get(term)
 
 
-def mime_from_rdf(resource):
+def mime_from_rdf(resource: RdfResource) -> str | None:
     # DCAT.mediaType *should* only be used when defined as IANA
-    mime = rdf_value(resource, DCAT.mediaType, unwrap=[RDFS.label])
+    mime = coerce_str(resource.value(DCAT.mediaType), unwrap=[RDFS.label])
     if not mime:
         return
     if key := vocabulary_key(mime, IANAFORMAT):
         return key
-    if isinstance(mime, str):
+    if isinstance(mime, str):  # FIXME: always the case now with coerce_str?
         return mime
 
 
-def format_from_rdf(resource: RdfResource):
+def format_from_rdf(resource: RdfResource) -> str | None:
     """
     Return what udata considers to be the format.
     - For services, return the service protocol if available, otherwise the distribution format.
@@ -640,12 +646,16 @@ def format_from_rdf(resource: RdfResource):
             if key := vocabulary_key(standard.identifier, OGC):
                 return key.lower()
 
-    if format := rdf_value(resource, DCT.format, unwrap=[RDFS.label]):
-        if key := vocabulary_key(format, EUFORMAT):
-            return key.lower()
-        if key := vocabulary_key(format, IANAFORMAT):
-            return key.split("/")[-1].lower()
-        return format.lower()
+    format = coerce_str(resource.value(DCT.format), unwrap=[RDFS.label])
+    if not format:
+        return
+
+    if key := vocabulary_key(format, EUFORMAT):
+        return key.lower()
+    if key := vocabulary_key(format, IANAFORMAT):
+        return key.split("/")[-1].lower()
+
+    return format.lower()
 
 
 def title_from_rdf(resource: RdfResource, url: str | None = None, format: str | None = None) -> str:
@@ -675,6 +685,7 @@ def access_rights_from_rdf(resource: RdfResource) -> set[str]:
     Extract the access rights from a RdfResource
     Cardinality is 0..n (although it should be 0..1 per the spec).
     """
+    # coerce_str_list(resource.objects(DCT.accessRights), unwrap=[RDFS.label, DCT.description], unique=True)
     return rdf_unique_values(resource, DCT.accessRights, unwrap=[RDFS.label, DCT.description])
 
 
@@ -731,6 +742,7 @@ def infer_dataset_access_rights(
     return dataset_access_rights, None, None
 
 
+# FIXME: no need for set type once we have coerce_str_list
 def add_dcat_extra(
     obj: Dataset | Resource, key: str, value: str | set | list
 ) -> Dataset | Resource:
@@ -754,8 +766,8 @@ def resource_from_rdf(graph_or_distrib, dataset=None, is_additionnal=False):
         distrib = graph_or_distrib.resource(node)
 
     if not is_additionnal:
-        download_url = url_from_rdf(distrib, DCAT.downloadURL)
-        access_url = url_from_rdf(distrib, DCAT.accessURL)
+        download_url = coerce_str(distrib.value(DCAT.downloadURL))
+        access_url = coerce_str(distrib.value(DCAT.accessURL))
         url = safe_unicode(download_url or access_url)
     else:
         url = distrib.identifier.toPython() if isinstance(distrib.identifier, URIRef) else None
@@ -789,10 +801,10 @@ def resource_from_rdf(graph_or_distrib, dataset=None, is_additionnal=False):
     resource.filetype = "remote"
     resource.title = title
     resource.url = url
-    resource.description = sanitize_html(default_lang_value(distrib, DCT.description))
-    resource.filesize = rdf_value(distrib, DCAT.byteSize, datatype=int) or rdf_value(
-        distrib, DCAT.byteSize, datatype=str
-    )
+    resource.description = sanitize_html(
+        rdf_value(distrib, DCT.description) or ""
+    )  # FIXME: avoid or ""
+    resource.filesize = coerce_int(distrib.value(DCAT.byteSize))
     resource.format = format
     resource.mime = mime_from_rdf(distrib)
     schema = schema_from_rdf(distrib)
@@ -811,15 +823,17 @@ def resource_from_rdf(graph_or_distrib, dataset=None, is_additionnal=False):
     if rights:
         add_dcat_extra(resource, "rights", rights)
 
+    # TODO: extract
     checksum = distrib.value(SPDX.checksum)
     if checksum:
         algorithm = checksum.value(SPDX.algorithm).identifier
         algorithm = CHECKSUM_ALGORITHMS.get(algorithm)
         if algorithm:
             resource.checksum = Checksum()
-            resource.checksum.value = rdf_value(checksum, SPDX.checksumValue)
+            resource.checksum.value = coerce_str(checksum.value(SPDX.checksumValue))
             resource.checksum.type = algorithm
 
+    # TODO: extract
     if is_additionnal:
         resource.type = "other"
     elif distrib.value(DCAT.accessService):
@@ -827,22 +841,22 @@ def resource_from_rdf(graph_or_distrib, dataset=None, is_additionnal=False):
         # that the distribution is of type API
         resource.type = "api"
 
-    identifier = rdf_value(distrib, DCT.identifier)
-    uri = distrib.identifier.toPython() if isinstance(distrib.identifier, URIRef) else None
-    issued_at = rdf_value(distrib, DCT.issued, date) or rdf_value(distrib, DCT.issued, str)
-    modified_at = rdf_value(distrib, DCT.modified, date) or rdf_value(distrib, DCT.modified, str)
-
+    # TODO: extract
     if not resource.harvest:
         resource.harvest = HarvestResourceMetadata()
-    resource.harvest.issued_at = issued_at
 
-    # :FutureHarvestModifiedAt
-    resource.harvest.modified_at = safe_harvest_datetime(
-        modified_at, "DCT.modified (resource)", refuse_future=True
+    resource.harvest.dct_identifier = coerce_str(distrib.value(DCT.identifier))
+    resource.harvest.uri = (
+        distrib.identifier.toPython() if isinstance(distrib.identifier, URIRef) else None
     )
 
-    resource.harvest.dct_identifier = identifier
-    resource.harvest.uri = uri
+    # FIXME: safe_harvest_datetime everywhere?
+    resource.harvest.issued_at = coerce_date(distrib.value(DCT.issued))
+    # FIXME: collapse safe_harvest_datetime in coerce_date, or add nicer wrapper?
+    # :FutureHarvestModifiedAt
+    resource.harvest.modified_at = safe_harvest_datetime(
+        coerce_date(distrib.value(DCT.modified)), "DCT.modified (resource)", refuse_future=True
+    )
 
     return resource
 
@@ -871,9 +885,13 @@ def dataset_from_rdf(
         raise HarvestSkipException("missing title on dataset")
 
     # Support dct:abstract if dct:description is missing (sometimes used instead)
-    description = default_lang_value(d, DCT.description) or default_lang_value(d, DCT.abstract)
+    description = (
+        rdf_value(d, DCT.description) or rdf_value(d, DCT.abstract) or ""
+    )  # FIXME: avoid or
     dataset.description = sanitize_html(description)
+
     dataset.frequency = frequency_from_rdf(d.value(DCT.accrualPeriodicity)) or dataset.frequency
+
     roles = [  # Imbricated list of contact points for each role
         contact_points_from_rdf(d, rdf_entity, role, dataset, dryrun=dryrun)
         for rdf_entity, role in CONTACT_POINT_ENTITY_TO_ROLE.items()
@@ -881,6 +899,7 @@ def dataset_from_rdf(
     dataset.contact_points = [  # Flattened list of contact points
         contact_point for role in roles for contact_point in role
     ] or dataset.contact_points
+
     schema = schema_from_rdf(d)
     if schema:
         dataset.schema = schema
@@ -895,6 +914,7 @@ def dataset_from_rdf(
 
     dataset.tags = themes_from_rdf(d)
 
+    # FIXME: absorb value, like spatial and provenance
     temporal_coverage = temporal_from_rdf(d.value(DCT.temporal))
     if temporal_coverage:
         dataset.temporal_coverage = temporal_coverage
@@ -939,26 +959,20 @@ def dataset_from_rdf(
         default=default_license,
     )
 
-    identifier = rdf_value(d, DCT.identifier)
-    uri = d.identifier.toPython() if isinstance(d.identifier, URIRef) else None
-
-    remote_url = remote_url_from_rdf(d, graph, remote_url_prefix=remote_url_prefix)
-
-    created_at = rdf_value(d, DCT.created, date) or rdf_value(d, DCT.created, str)
-    issued_at = rdf_value(d, DCT.issued, date) or rdf_value(d, DCT.issued, str)
-    modified_at = rdf_value(d, DCT.modified, date) or rdf_value(d, DCT.modified, str)
-
+    # TODO: extract
     if not dataset.harvest:
         dataset.harvest = HarvestDatasetMetadata()
-    dataset.harvest.dct_identifier = identifier
-    dataset.harvest.uri = uri
-    dataset.harvest.remote_url = remote_url
-    dataset.harvest.created_at = created_at
-    dataset.harvest.issued_at = issued_at
 
+    dataset.harvest.dct_identifier = coerce_str(d.value(DCT.identifier))
+    dataset.harvest.uri = d.identifier.toPython() if isinstance(d.identifier, URIRef) else None
+    dataset.harvest.remote_url = remote_url_from_rdf(d, graph, remote_url_prefix=remote_url_prefix)
+
+    # FIXME: safe_harvest_datetime everywhere?
+    dataset.harvest.created_at = coerce_date(d.value(DCT.created))
+    dataset.harvest.issued_at = coerce_date(d.value(DCT.issued))
     # :FutureHarvestModifiedAt
     dataset.harvest.modified_at = safe_harvest_datetime(
-        modified_at, "DCT.modified (dataset)", refuse_future=True
+        coerce_date(d.value(DCT.modified)), "DCT.modified (dataset)", refuse_future=True
     )
 
     return dataset

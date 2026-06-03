@@ -4,13 +4,15 @@ This module centralize udata-wide RDF helpers and configuration
 
 import logging
 import re
+from datetime import date
 from html.parser import HTMLParser
-from typing import Never, TypeVar, cast, overload
+from typing import TypeAlias, TypeVar
 from urllib.parse import quote
 
 import mongoengine
+from dateutil.parser import parse as parse_date
 from flask import abort, current_app, request, url_for
-from rdflib import BNode, Graph, Literal, URIRef
+from rdflib import BNode, Graph, IdentifiedNode, Literal, URIRef
 from rdflib.namespace import (
     DCTERMS,
     FOAF,
@@ -232,143 +234,155 @@ CONTEXT = {
 
 
 _T = TypeVar("_T")
-_MISSING = cast(None, object())
 
 
-@overload
-def to_python(literal: Literal, datatype: type[_T], default: None) -> _T | None: ...
+# @overload
+# def to_python(literal: Literal, datatype: type[_T], default: None) -> _T | None: ...
 
 
-@overload
-def to_python(literal: Literal, datatype: type[_T], default: _T) -> _T: ...
+# @overload
+# def to_python(literal: Literal, datatype: type[_T], default: _T) -> _T: ...
 
 
-@overload
-def to_python(literal: Literal, datatype: type[_T]) -> Never: ...
+# @overload
+# def to_python(literal: Literal, datatype: type[_T]) -> Never: ...
 
 
-def to_python(literal: Literal, datatype: type[_T], default: _T | None = _MISSING) -> _T | None:
-    """
-    Convert a literal to the given python datatype.
+# def to_python(literal: Literal, datatype: type[_T], default: _T | None = _MISSING) -> _T | None:
+#     """
+#     Convert a literal to the given python datatype.
 
-    Unlike `Literal.toPython()`, this function never returns the literal itself.
-    Unlike `cast`, this function ensures the returned value has the expected datatype.
+#     Unlike `Literal.toPython()`, this function never returns the literal itself.
+#     Unlike `cast`, this function ensures the returned value has the expected datatype.
 
-    Args:
-        literal: The literal to convert.
-        datatype: The expected python datatype.
-        default: The value to return if conversion fails. Optional.
+#     Args:
+#         literal: The literal to convert.
+#         datatype: The expected python datatype.
+#         default: The value to return if conversion fails. Optional.
 
-    Returns:
-        The python value if successful, or `default` if conversion fails.
+#     Returns:
+#         The python value if successful, or `default` if conversion fails.
 
-    Raises:
-        TypeError: If conversion fails and no `default` is provided.
+#     Raises:
+#         TypeError: If conversion fails and no `default` is provided.
 
-    Examples:
-        >>> to_python(Literal(42), int, default=0)
-        42
-        >>> to_python(Literal("foo"), int, default=0)
-        0
-        >>> to_python(Literal("foo"), int, default=None)
-        None
-        >>> to_python(Literal("foo"), int)
-        TypeError: cannot convert Literal("foo") to int
-    """
-    value = literal.toPython()
+#     Examples:
+#         >>> to_python(Literal(42), int, default=0)
+#         42
+#         >>> to_python(Literal("foo"), int, default=0)
+#         0
+#         >>> to_python(Literal("foo"), int, default=None)
+#         None
+#         >>> to_python(Literal("foo"), int)
+#         TypeError: cannot convert Literal("foo") to int
+#     """
+#     value = literal.toPython()
 
-    if not isinstance(value, datatype):
-        message = f"cannot convert {literal!r} to {datatype.__name__}"
-        if default is _MISSING:
-            raise TypeError(message)
-        log.warning(message)
+#     if isinstance(value, Literal) or not isinstance(value, datatype):
+#         message = f"cannot convert {literal!r} to {datatype.__name__}"
+#         if default is _MISSING:
+#             raise TypeError(message)
+#         log.warning(message)
+#         return default
+
+#     return value
+
+
+# from typing import Protocol
+
+# class StrConstructible(Protocol):
+#     def __init__(self, value: str): ...
+
+
+# # FIXME: explain why can't be more precise
+_RdfObject: TypeAlias = object
+
+
+def _coerce(
+    node_or_resource: _RdfObject,
+    datatype: type[_T],
+    default: _T | None = None,
+    constructor=None,  # TODO: typing
+    unwrap: list[URIRef] | None = None,
+) -> _T | None:
+    if isinstance(node_or_resource, Literal):
+        node = node_or_resource
+    elif isinstance(node_or_resource, IdentifiedNode):
+        # FIXME: only in some cases => need param
+        node = node_or_resource
+    elif isinstance(node_or_resource, RdfResource):
+        for predicate in unwrap or []:
+            # FIXME: propery handle locale
+            # if value := _coerce(node_or_resource.value(predicate), datatype, constructor=constructor):
+            if value := _coerce(
+                default_lang_value(node_or_resource, predicate), datatype, constructor=constructor
+            ):
+                return value
+        # FIXME: only in some cases => need param (same as IdentifiedNode above)
+        node = node_or_resource.identifier
+    else:
+        # FIXME: raise?
         return default
 
-    return value
+    value = node.toPython()
+
+    if isinstance(value, datatype):
+        return value
+
+    try:
+        # FIXME: don't cast Literal to str?
+        return constructor(value)  # FIXME: ... if constructor else datatype(value)
+    except Exception:
+        pass
+
+    log.warning(f"cannot convert {node!r} to {datatype.__name__}")  # FIXME: exc_info=True ?
+    return default
 
 
-@overload
-def serialize_value(
-    value, datatype: type[str] = ..., default: str | None = ..., unwrap: list[URIRef] | None = ...
-) -> str: ...
+def coerce_int(node_or_resource: _RdfObject, default: int | None = None) -> int | None:
+    return _coerce(node_or_resource, int, default=default, constructor=int)
 
 
-@overload
-def serialize_value(
-    value, datatype: type[_T], default: _T | None = ..., unwrap: list[URIRef] | None = ...
-) -> _T: ...
+def coerce_float(node_or_resource: _RdfObject, default: float | None = None) -> float | None:
+    return _coerce(node_or_resource, float, default=default, constructor=float)
 
 
-def serialize_value(value, datatype: type = str, default=None, unwrap=None):
-    """
-    If the value is a URIRef or a Literal, return it as a string.
-    If the value is a RdfResource:
-        - if `unwrap` is set, look for children of the RdfResource in the order they are listed in
-          `unwrap`, and return the value of the first matching element (if any),
-        - otherwise return the identifier of the RdfResource.
-    """
-    if isinstance(value, URIRef):
-        # FIXME: raise when datatype != str
-        return value.toPython()
-
-    if isinstance(value, Literal):
-        return to_python(value, datatype=datatype, default=default)
-
-    if isinstance(value, RdfResource):
-        for uriref in unwrap or []:
-            if val := rdf_value(value, uriref, datatype=datatype, default=None):
-                return val
-        # FIXME: guard against Literal identifier => ensure toPython is str
-        # FIXME: raise when datatype != str
-        return value.identifier.toPython()
+def coerce_str(
+    node_or_resource: _RdfObject, default: str | None = None, unwrap: list[URIRef] | None = None
+) -> str | None:
+    return _coerce(node_or_resource, str, default=default, constructor=str, unwrap=unwrap)
 
 
-@overload
+def coerce_date(node_or_resource: _RdfObject, default: date | None = None) -> date | None:
+    # FIXME: date vs datetime?
+    # FIXME: take constructor param + kwargs
+    return _coerce(node_or_resource, date, default=default, constructor=parse_date)
+
+
+# FIXME: coerce_str_list?
+# FIXME: surface locale?
+# FIXME: needs default?
 def rdf_unique_values(
     resource,
     predicate,
-    datatype: type[str] = ...,
-    default: str | None = ...,
-    unwrap: list[URIRef] | None = ...,
-) -> set[str]: ...
-
-
-@overload
-def rdf_unique_values(
-    resource,
-    predicate,
-    datatype: type[_T],
-    default: _T | None = ...,
-    unwrap: list[URIRef] | None = ...,
-) -> set[_T]: ...
-
-
-def rdf_unique_values(resource, predicate, datatype: type = str, default=None, unwrap=None) -> set:
+    default: str | None = None,
+    unwrap: list[URIRef] | None = None,
+) -> set[str]:
     """Returns a set of serialized values for a predicate from a RdfResource"""
     return {
         value
-        for info in resource.objects(predicate=predicate)
-        if (value := serialize_value(info, datatype=datatype, default=default, unwrap=unwrap))
+        for obj in resource.objects(predicate=predicate)
+        if (value := coerce_str(obj, default=None, unwrap=unwrap))
     }
 
 
-@overload
+# TODO: rename to hint at multilingual -> coerce_localized?
 def rdf_value(
     obj,
     predicate,
-    datatype: type[str] = ...,
-    default: str | None = ...,
-    unwrap: list[URIRef] | None = ...,
-) -> str: ...
-
-
-@overload
-def rdf_value(
-    obj, predicate, datatype: type[_T], default: _T | None = ..., unwrap: list[URIRef] | None = ...
-) -> _T: ...
-
-
-def rdf_value(obj, predicate, datatype: type = str, default=None, unwrap=None):
+    default: str | None = None,
+    unwrap: list[URIRef] | None = None,
+) -> str | None:
     """
     Serialize the value for a predicate on a RdfResource,
     expecting one value only or (at most) one per language for Literals.
@@ -376,7 +390,7 @@ def rdf_value(obj, predicate, datatype: type = str, default=None, unwrap=None):
     value = default_lang_value(obj, predicate)
     if not value:
         return default
-    return serialize_value(value, datatype=datatype, default=default, unwrap=unwrap)
+    return coerce_str(value, default=default, unwrap=unwrap)
 
 
 def vocabulary_key(uri: str, vocabulary: Namespace) -> str | None:
@@ -384,6 +398,9 @@ def vocabulary_key(uri: str, vocabulary: Namespace) -> str | None:
         return uri.removeprefix(vocabulary)
 
 
+# FIXME: apply to other than description? title etc
+# FIXME: collapse with rdf_value or coerce_str, introducing a locale there?
+# FIXME: coerce_locale?
 def default_lang_value(obj, predicate):
     """
     Return the value with the default language if multiple Literal values exist in different languages.
@@ -410,27 +427,19 @@ class HTMLDetector(HTMLParser):
         self.elements.add(tag)
 
 
+# TODO: fail fast
 def is_html(text):
     parser = HTMLDetector()
     parser.feed(text)
     return bool(parser.elements)
 
 
-def sanitize_html(text):
-    text = to_python(text, str, "") if isinstance(text, Literal) else ""
+# TODO: move to general text utils
+def sanitize_html(text: str) -> str:
     if is_html(text):
         return parse_html(text)
     else:
         return text.strip()
-
-
-def url_from_rdf(rdf, prop):
-    """
-    Try to extract An URL from a resource property.
-    It can be expressed in many forms as a URIRef or a Literal
-    """
-    value = rdf.value(prop)
-    return serialize_value(value)
 
 
 def theme_labels_from_rdf(rdf):
@@ -469,7 +478,7 @@ def theme_labels_from_rdf(rdf):
                         ) or scheme_uri in INSPIRE_GEMET_SCHEME_URIS:
                             yield "inspire"
         else:
-            label = to_python(theme, str, None)
+            label = theme.toPython()  # FIXME: needs coerce?
         if label:
             yield label
 
@@ -481,7 +490,7 @@ def themes_from_rdf(rdf):
             # dcat:keyword should be Literal, not a Resource/URIRef
             log.warning(f"Ignoring dcat:keyword with URI value: {keyword.identifier}")
             continue
-        if tag := to_python(keyword, str, None):
+        if tag := keyword.toPython():  # FIXME: needs coerce?
             tags.append(tag)
     tags += theme_labels_from_rdf(rdf)
     return list(set(tags))
@@ -500,7 +509,7 @@ def contact_points_from_rdf(rdf, prop, role, dataset, dryrun=False):
         # Read contact point information
         if isinstance(contact_point, Literal):
             log.warning(f"Found a `Literal` inside {prop}, `foaf:Agent` or `vcard:Kind` expected.")
-            name = to_python(contact_point, str, None)
+            name = contact_point.toPython()
             email = None
             contact_form = None
         elif prop == DCAT.contactPoint:  # Could be split on the type of contact_point instead
@@ -509,12 +518,12 @@ def contact_points_from_rdf(rdf, prop, role, dataset, dryrun=False):
                 rdf_value(contact_point, VCARD["organization-name"]),
             )
             email = (
-                rdf_value(contact_point, VCARD.hasEmail)
-                or rdf_value(contact_point, VCARD.email)
+                coerce_str(contact_point.value(VCARD.hasEmail))
+                or coerce_str(contact_point.value(VCARD.email))
                 or None
             )
             email = email.replace("mailto:", "").strip() if email else None
-            contact_form = rdf_value(contact_point, VCARD.hasUrl)
+            contact_form = coerce_str(contact_point.value(VCARD.hasUrl))
         else:
             contact_point_org = contact_point.value(ORG.memberOf)
             name = contact_point_name(
@@ -522,8 +531,8 @@ def contact_points_from_rdf(rdf, prop, role, dataset, dryrun=False):
                 rdf_value(contact_point_org, FOAF.name) if contact_point_org else None,
             )
             email = (
-                rdf_value(contact_point, FOAF.mbox)
-                or (contact_point_org and rdf_value(contact_point_org, FOAF.mbox))
+                coerce_str(contact_point.value(FOAF.mbox))
+                or (contact_point_org and coerce_str(contact_point_org.value(FOAF.mbox)))
                 or None
             )
             email = email.replace("mailto:", "").strip() if email else None
@@ -598,6 +607,7 @@ def contact_points_to_rdf(contacts, graph=None):
         yield node, role
 
 
+# TODO: no need for graph since we have resource
 def primary_topic_identifier_from_rdf(graph: Graph, resource: RdfResource):
     """
     Extract the dct:identifier from a primaryTopic of a RdfResource `resource` via an RDF `graph`.
@@ -614,6 +624,7 @@ def primary_topic_identifier_from_rdf(graph: Graph, resource: RdfResource):
         return graph.value(primary_topic, DCT.identifier)
 
 
+# TODO: no need for graph since we have resource
 def remote_url_from_rdf(rdf: RdfResource, graph: Graph, remote_url_prefix: str | None = None):
     """
     Compute from `remote_url_prefix` if provided and primaryTopic identifier if found.
@@ -646,7 +657,7 @@ def remote_url_from_rdf(rdf: RdfResource, graph: Graph, remote_url_prefix: str |
             identifier = identifier.value[offset:]
         return f"{remote_url_prefix.rstrip('/')}/{identifier}"
 
-    landing_page = url_from_rdf(rdf, DCAT.landingPage)
+    landing_page = coerce_str(rdf.value(DCAT.landingPage))
     uri = rdf.identifier.toPython()
     for candidate in [landing_page, uri]:
         if candidate:
@@ -667,10 +678,9 @@ def schema_from_rdf(rdf):
         return None
 
     schema = Schema()
-    if isinstance(resource, URIRef):
+    # TODO: could this be generalized to coerce_url? !! specificities with DCT.type and DCT.title
+    if isinstance(resource, Literal | URIRef):
         schema.url = resource.toPython()
-    elif isinstance(resource, Literal):
-        schema.url = to_python(resource, str, None)
     elif isinstance(resource, RdfResource):
         # We try to get the schema "correct" URL.
         # 1. The identifier of the DCT.conformsTo
@@ -681,13 +691,14 @@ def schema_from_rdf(rdf):
             url = uris.validate(resource.identifier.toPython())
         except uris.ValidationError:
             try:
+                # FIXME: coerce_str, but need to unwrap the URIRef from resource to get at the identifier
                 type = resource.value(DCT.type)
                 if type is not None:
                     url = uris.validate(type.identifier.toPython())
             except uris.ValidationError:
                 pass
         schema.url = url
-        schema.name = resource.value(DCT.title)
+        schema.name = rdf_value(resource, DCT.title)
     else:
         return None
 

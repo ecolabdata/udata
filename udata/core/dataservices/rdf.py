@@ -1,5 +1,3 @@
-from datetime import date
-
 from flask import current_app
 from rdflib import RDF, BNode, Graph, Literal, URIRef
 
@@ -15,15 +13,15 @@ from udata.rdf import (
     DCT,
     HVD_LEGISLATION,
     TAG_TO_EU_HVD_CATEGORIES,
+    coerce_date,
+    coerce_str,
     contact_points_from_rdf,
     contact_points_to_rdf,
-    default_lang_value,
     namespace_manager,
     rdf_value,
     remote_url_from_rdf,
     set_harvested_date,
     themes_from_rdf,
-    url_from_rdf,
 )
 
 
@@ -44,14 +42,14 @@ def dataservice_from_rdf(
     d = graph.resource(node)
 
     dataservice.title = rdf_value(d, DCT.title)
-    dataservice.description = sanitize_html(
-        default_lang_value(d, DCT.description) or default_lang_value(d, DCT.abstract)
+    dataservice.description = sanitize_html(  # FIXME: avoid or
+        rdf_value(d, DCT.description) or rdf_value(d, DCT.abstract) or ""
     )
 
-    dataservice.base_api_url = url_from_rdf(d, DCAT.endpointURL)
+    dataservice.base_api_url = coerce_str(d.value(DCAT.endpointURL))
 
     # TODO detect if it's human-readable or not?
-    dataservice.machine_documentation_url = url_from_rdf(d, DCAT.endpointDescription)
+    dataservice.machine_documentation_url = coerce_str(d.value(DCAT.endpointDescription))
 
     roles = [  # Imbricated list of contact points for each role
         contact_points_from_rdf(d, rdf_entity, role, dataservice, dryrun=dryrun)
@@ -89,13 +87,9 @@ def dataservice_from_rdf(
     dataservice.harvest.remote_url = remote_url_from_rdf(
         d, graph, remote_url_prefix=remote_url_prefix
     )
-    dataservice.harvest.created_at = rdf_value(d, DCT.created, date) or rdf_value(
-        d, DCT.created, str
-    )
-    dataservice.harvest.issued_at = rdf_value(d, DCT.issued, date) or rdf_value(d, DCT.issued, str)
-    dataservice.metadata_modified_at = rdf_value(d, DCT.modified, date) or rdf_value(
-        d, DCT.modified, str
-    )
+    dataservice.harvest.created_at = coerce_date(d.value(DCT.created))
+    dataservice.harvest.issued_at = coerce_date(d.value(DCT.issued))
+    dataservice.metadata_modified_at = coerce_date(d.value(DCT.modified))
 
     dataservice.tags = themes_from_rdf(d)
 

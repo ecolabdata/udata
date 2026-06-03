@@ -20,10 +20,10 @@ from udata.rdf import (
     GEODCAT,
     HYDRA,
     SPDX,
+    coerce_str,
     guess_format,
     namespace_manager,
     rdf_value,
-    url_from_rdf,
 )
 from udata.storage.s3 import store_as_json
 from udata.utils import safe_unicode
@@ -165,7 +165,7 @@ class DcatBackend(BaseBackend):
                 if (None, RDF.type, cls) in subgraph:
                     pagination = subgraph.value(predicate=RDF.type, object=cls)
                     pagination = subgraph.resource(pagination)
-                    url = url_from_rdf(pagination, prop)
+                    url = coerce_str(pagination.value(prop))
                     break
 
             yield page_number, subgraph
