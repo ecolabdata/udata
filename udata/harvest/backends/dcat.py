@@ -14,6 +14,7 @@ from udata.core.dataservices.models import Dataservice
 from udata.core.dataservices.rdf import dataservice_from_rdf
 from udata.core.dataset.models import Dataset
 from udata.core.dataset.rdf import dataset_from_rdf
+from udata.core.organization.models import Organization
 from udata.harvest.models import HarvestError, HarvestItem
 from udata.i18n import gettext as _
 from udata.rdf import (
@@ -30,7 +31,7 @@ from udata.rdf import (
 from udata.storage.s3 import store_as_json
 from udata.utils import safe_unicode
 
-from .base import BaseBackend, HarvestExtraConfig, HarvestFeature
+from .base import BaseBackend, Harvestable, HarvestExtraConfig, HarvestFeature
 
 log = logging.getLogger(__name__)
 
@@ -75,7 +76,11 @@ class DcatBackend(BaseBackend):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
         self.graphs = list[tuple[Graph, int]]()
-        self.organizations_to_update = set()
+        # self.pending_datasets = list[tuple[Dataset, str]]()
+        self.pending_dataservices = list[tuple[Dataservice, list[str]]]()
+        self.pending_organizations = set[Organization]()
+        self.by_data_id = dict[str, Harvestable]()
+        # self.by_metadata_id = dict[str, Harvestable]()
 
     @override
     def inner_harvest(self):
@@ -83,27 +88,20 @@ class DcatBackend(BaseBackend):
         self.job.data = {"format": fmt}
 
         for graph, page_number in self.walk_graph(self.source.url, fmt):
-            self.process_one_datasets_page(graph, page_number)
             self.graphs.append((graph, page_number))
-
-        # We do a second pass to have all datasets in memory and attach datasets
-        # to dataservices. It could be better to be one pass of graph walking and
-        # then one pass of attaching datasets to dataservices.
-        for graph, page_number in self.graphs:
-            self.process_one_dataservices_page(graph, page_number)
-
-        for org in self.organizations_to_update:
-            org.compute_aggregate_metrics = True
-            org.count_datasets()
-            org.count_dataservices()
+            self.process_page(graph, page_number)
 
         # TODO: move in base to benefit other harvesters
         if not self.dryrun and self.has_reached_max_items():
             # We have reached the max_items limit. Warn the user that all the datasets may not be present.
-            error = HarvestError(
-                message=f"{self.max_items} max items reached, not all datasets/dataservices were retrieved"
+            self.job.errors.append(
+                HarvestError(
+                    message=f"{self.max_items} max items reached, not all datasets/dataservices were retrieved"
+                )
             )
-            self.job.errors.append(error)
+
+        # FIXME: add tests
+        self.process_pending()
 
         self.store_graphs(fmt)
 
@@ -152,33 +150,36 @@ class DcatBackend(BaseBackend):
 
             page_number += 1
 
-    def process_one_datasets_page(self, graph: Graph, page_number: int):
-        for node in graph.subjects(RDF.type, [DCAT.Dataset, DCAT.DatasetSeries]):
-            if self.is_dataset_external_to_this_graph(node, graph):
-                continue
-
+    # FIXME: DRY
+    def process_page(self, graph: Graph, page_number: int):
+        for node in self.list_datasets(graph):
             remote_id = str(v) if (v := graph.value(node, DCT.identifier)) else None
             self.process_item(
                 remote_id, self.process_dataset, node=node, graph=graph, page_number=page_number
             )
-
             if self.has_reached_max_items():
                 return
 
-    def process_one_dataservices_page(self, graph: Graph, page_number: int):
-        access_services = {o for _, _, o in graph.triples((None, DCAT.accessService, None))}
-
-        for node in graph.subjects(RDF.type, DCAT.DataService):
-            if node in access_services:
-                continue
-
+        for node in self.list_dataservices(graph):
             remote_id = str(v) if (v := graph.value(node, DCT.identifier)) else None
             self.process_item(
                 remote_id, self.process_dataservice, node=node, graph=graph, page_number=page_number
             )
-
             if self.has_reached_max_items():
                 return
+
+    def list_datasets(self, graph: Graph):
+        for node in graph.subjects(RDF.type, [DCAT.Dataset, DCAT.DatasetSeries]):
+            if self.is_dataset_external_to_this_graph(node, graph):
+                continue
+            yield node
+
+    def list_dataservices(self, graph: Graph):
+        access_services = {o for _, _, o in graph.triples((None, DCAT.accessService, None))}
+        for node in graph.subjects(RDF.type, DCAT.DataService):
+            if node in access_services:
+                continue
+            yield node
 
     def is_dataset_external_to_this_graph(self, node: Node, graph: Graph) -> bool:
         # In dataservice nodes we have `servesDataset` or `hasPart` that can contains nodes
@@ -223,10 +224,17 @@ class DcatBackend(BaseBackend):
             graph, dataset, node=node, remote_url_prefix=remote_url_prefix, dryrun=self.dryrun
         )
 
+        # FIXME?: dataset.harvest.remote_id is set later in process_item
+        self.by_data_id[harvest_item.remote_id] = dataset
+        # self.by_metadata_id[dataset.harvest.remote_metadata_id] = dataset
+
+        # if parent:
+        #     self.pending_datasets.append((dataset, parent))
+
         # TODO: move in base to benefit other harvesters
         if dataset.organization:
             dataset.organization.compute_aggregate_metrics = False
-            self.organizations_to_update.add(dataset.organization)
+            self.pending_organizations.add(dataset.organization)
 
         return dataset
 
@@ -241,20 +249,54 @@ class DcatBackend(BaseBackend):
         remote_url_prefix = self.get_extra_config_value("remote_url_prefix")
 
         dataservice = self.get_item(harvest_item.remote_id, Dataservice)
-        dataservice = dataservice_from_rdf(
+        dataservice, serves = dataservice_from_rdf(
             graph,
             dataservice,
             node,
-            [itm.dataset for itm in self.job.items],
             remote_url_prefix=remote_url_prefix,
             dryrun=self.dryrun,
         )
 
+        # FIXME: needed?
+        self.by_data_id[harvest_item.remote_id] = dataservice
+        # self.by_metadata_id[harvest_item.remote_metadata_id] = dataservice
+
+        if serves:
+            self.pending_dataservices.append((dataservice, serves))
+
         if dataservice.organization:
             dataservice.organization.compute_aggregate_metrics = False
-            self.organizations_to_update.add(dataservice.organization)
+            self.pending_organizations.add(dataservice.organization)
 
         return dataservice
+
+    def process_pending(self):
+        # for dataset, parent in self.pending_datasets:
+        #     dataset.parent = self.by_metadata_id.get(parent)
+        #     if not self.dryrun:
+        #         dataset.save()
+
+        for dataservice, serves in self.pending_dataservices:
+            for id in serves:
+                dataset = self.by_data_id.get(id)
+                if dataset is None:
+                    # FIXME: better solution?
+                    # Try with `endswith` because Europe XSLT have problems with IDs.
+                    # Sometimes they are prefixed with the domain of the catalog, sometimes not.
+                    dataset = next(
+                        (d for k, d in self.by_data_id.items() if k.endswith(id)),
+                        None,
+                    )
+                if dataset is None or dataset in dataservice.datasets:
+                    continue
+                dataservice.datasets.append(dataset)
+            if not self.dryrun:
+                dataservice.save()
+
+        for org in self.pending_organizations:
+            org.compute_aggregate_metrics = True
+            org.count_datasets()
+            org.count_dataservices()
 
     def store_graphs(self, fmt: str):
         # The official MongoDB document size in 16MB. The default value here is 15MB to account

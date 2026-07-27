@@ -28,10 +28,9 @@ def dataservice_from_rdf(
     graph: Graph,
     dataservice: Dataservice,
     node: Node | None,
-    all_datasets: list[Dataset],
     remote_url_prefix: str | None = None,
     dryrun: bool = False,
-) -> Dataservice:
+) -> tuple[Dataservice, list[str]]:
     """
     Create or update a dataservice from a RDF/DCAT graph
     """
@@ -60,23 +59,6 @@ def dataservice_from_rdf(
         contact_point for role in roles for contact_point in role
     ] or dataservice.contact_points
 
-    for dataset_node in d.objects(DCAT.servesDataset):
-        id = dataset_node.value(DCT.identifier)
-        dataset = next(
-            (d for d in all_datasets if d is not None and d.harvest.remote_id == id), None
-        )
-
-        if dataset is None:
-            # We try with `endswith` because Europe XSLT have problems with IDs. Sometimes they are prefixed with the domain of the catalog, sometimes not.
-            dataset = next(
-                (d for d in all_datasets if d is not None and d.harvest.remote_id.endswith(id)),
-                None,
-            )
-
-        # We append the dataset to the list of the current attached ones if not already attached
-        if dataset is not None and dataset not in dataservice.datasets:
-            dataservice.datasets.append(dataset)
-
     license = rdf_value(d, DCT.license)
     if license is not None:
         dataservice.license = License.guess(license)
@@ -94,7 +76,9 @@ def dataservice_from_rdf(
 
     dataservice.tags = themes_from_rdf(d)
 
-    return dataservice
+    serves = [str(id) for n in d.objects(DCAT.servesDataset) if (id := n.value(DCT.identifier))]
+
+    return dataservice, serves
 
 
 def dataservice_to_rdf(dataservice: Dataservice, graph=None):
