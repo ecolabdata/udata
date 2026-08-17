@@ -127,6 +127,7 @@ dataset_fields = apiv2.model(
         "badges": fields.List(
             fields.Nested(Badge.__read_fields__), description="The dataset badges", readonly=True
         ),
+        # TODO: archived - all or non-archived only?
         "resources": fields.Raw(
             attribute=lambda o: {
                 "rel": "subsection",
@@ -423,6 +424,8 @@ class ResourcesAPI(API):
         next_page = f"{list_resources_url}?page={page + 1}&page_size={page_size}"
         previous_page = f"{list_resources_url}?page={page - 1}&page_size={page_size}"
 
+        # TODO: archived - all or non-archived only?
+
         # Filter the resources server-side so a dataset with many or heavy
         # resources isn't fully loaded just to serve a single page (the route
         # loads the dataset without its resources, see the converter).
@@ -482,6 +485,7 @@ class DatasetSchemasAPI(API):
                 "$match": {"_id": dataset.id}  # Sélection du document
             },
             {
+                # TODO: archived - non-archived only (here too or just below?)
                 "$project": {
                     "resources": {
                         "$filter": {
@@ -495,6 +499,7 @@ class DatasetSchemasAPI(API):
         ]
 
         dataset = next(Dataset.objects.aggregate(*pipeline))
+        # TODO: archived - non-archived only
         return list(
             {
                 (

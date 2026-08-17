@@ -417,6 +417,9 @@ class ResourceMixin(object):
     last_modified_internal = DateTimeField(default=lambda: datetime.now(UTC), required=True)
     deleted = DateTimeField()
 
+    # TODO: archived - will leak to community resources if in mixin => ok?
+    archived = DateTimeField()
+
     @property
     def internal(self):
         return {
@@ -446,6 +449,16 @@ class ResourceMixin(object):
         super(ResourceMixin, self).clean()
         if not self.urlhash or "url" in self._get_changed_fields():
             self.urlhash = hash_url(self.url)
+
+    # TODO: archived
+    # @property
+    # def is_visible(self):
+    #     return not self.is_hidden
+
+    # TODO: archived
+    # @property
+    # def is_hidden(self):
+    #     return self.private or self.deleted or self.archived
 
     @property
     def preview_url(self):
@@ -707,6 +720,8 @@ class Dataset(
     def spam_is_whitelisted(self) -> bool:
         return self.organization and self.organization.certified
 
+    # TODO: archived - self.resource returns all + iterator over non-archived OR self.resource returns non-archived + iterator over all
+
     @cached_property
     def resources_len(self):
         # :ResourcesLengthProperty
@@ -714,8 +729,10 @@ class Dataset(
         # to do a new Mongo request to fetch the resources length manually.
         # If the resources are already present, just return the `len()` of the array.
         if not self.missing_resources:
+            # TODO: archived: all or non-archived only?
             return len(self.resources)
 
+        # TODO: archived - all or non-archived only?
         pipeline = [
             {"$project": {"_id": 1, "resources_len": {"$size": {"$ifNull": ["$resources", []]}}}}
         ]
@@ -833,6 +850,7 @@ class Dataset(
         Return a list of (boolean or 'unknown')
         """
         # Only check remote resources.
+        # TODO: archived: non-archived only
         remote_resources = [
             resource for resource in self.resources if resource.filetype == "remote"
         ]
@@ -862,6 +880,7 @@ class Dataset(
         if self.harvest and self.harvest.modified_at:
             return to_naive_datetime(self.harvest.modified_at)
         if self.resources:
+            # TODO: archived: non-archived only
             return max([res.last_modified for res in self.resources])
         else:
             return self.last_modified
@@ -943,6 +962,7 @@ class Dataset(
             else False
         )
 
+        # TODO: archived: non-archived only
         if self.resources:
             result["has_resources"] = True
             result["has_open_format"] = not all(
@@ -1036,10 +1056,13 @@ class Dataset(
         """Perform an atomic prepend for a new resource"""
         resource.validate()
 
-        existing_resource = next((r for r in self.resources if r.id == resource.id), None)
-        if existing_resource:
+        existing = next((r for r in self.resources if r.id == resource.id), None)
+        if existing:
             raise MongoEngineValidationError(
-                f"Cannot add resource '{resource.title}'. A resource '{existing_resource.title}' already exists with ID '{existing_resource.id}'"
+                f"Cannot add resource '{resource.title}'. "
+                + f"A resource '{existing.title}' already exists with ID '{existing.id}'"
+                + (f" (archived at {existing.archived})" if existing.archived else "")
+                + "."
             )
 
         # Update the in-memory document to match what we persist, avoiding a costly
@@ -1075,7 +1098,7 @@ class Dataset(
 
         self.on_resource_updated.send(self.__class__, document=self, resource_id=resource.id)
 
-    def update_resource_extras(self, resource):
+    def update_resource_extras(self, resource: Resource):
         """Persist a single resource's extras with a targeted positional update.
 
         `resource` must be the in-memory instance held in `self.resources` (its
@@ -1095,12 +1118,33 @@ class Dataset(
         # would reject unrelated invalid legacy fields and lock Hydra out of the
         # very resources it has to keep checking.
         Resource.extras.validate(resource.extras)
+        # TODO: archived - reset?
         self._atomic_resources_update(
             match_resource=resource,
             set__resources__S__extras=resource.extras,
         )
 
-    def remove_resource(self, resource):
+    def archive_resource(self, resource: Resource):
+        existing = next((r for r in self.resources if r.id == resource.id), None)
+        if not existing:
+            raise MongoEngineValidationError(
+                f"Cannot archive unknown resource '{resource.title}' with ID {resource.id}."
+            )
+        existing.archived = datetime.now(UTC)
+        # TODO: archived - move to end of list?
+        # TODO: archived - self.last_modified_internal
+
+    def unarchive_resource(self, resource: Resource):
+        existing = next((r for r in self.resources if r.id == resource.id), None)
+        if not existing:
+            raise MongoEngineValidationError(
+                f"Cannot unarchive unknown resource '{resource.title}' with ID {resource.id}."
+            )
+        existing.archived = None
+        # TODO: archived - move to start/end of non-archived?
+        # TODO: archived - self.last_modified_internal
+
+    def remove_resource(self, resource: Resource):
         # Update the in-memory document to match what we persist, avoiding a costly
         # self.reload() (see update_resource).
         self.resources = [r for r in self.resources if r.id != resource.id]
@@ -1332,6 +1376,7 @@ def get_resource(id):
     """Fetch a resource given its UUID"""
     dataset = get_dataset_by_resource_id(id)
     if dataset:
+        # TODO: archived - all or non-archived only?
         return get_by(dataset.resources, id=id)
     else:
         return CommunityResource.objects(id=id).first()

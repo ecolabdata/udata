@@ -27,6 +27,7 @@ def serialize_resource_for_event(resource):
         "checksum_value": resource.checksum.value if resource.checksum else None,
         "created_at": to_iso_datetime(resource.created_at),
         "last_modified": to_iso_datetime(resource.last_modified),
+        # TODO: archived - all or non-archived only?
     }
     extras = {}
     for key, value in resource.extras.items():
@@ -108,3 +109,6 @@ def publish_removed_resource_message(sender, document, **kwargs) -> None:
             None,
             EventMessageType.DELETED,
         )
+
+
+# TODO: archived - on_resource_archived/unarchived events

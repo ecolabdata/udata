@@ -268,6 +268,7 @@ class CkanBackend(BaseBackend):
                 continue
             if not resource:
                 resource = Resource(id=res["id"])
+                # TODO: archived - dataset.add_resource?
                 dataset.resources.append(resource)
             if not resource.harvest:
                 resource.harvest = HarvestResourceMetadata()

@@ -69,6 +69,7 @@ def purge_datasets(self):
         Assignment.objects(subject=dataset).delete()
         # Remove each dataset's resource's file
         storage = storages.resources
+        # TODO: archived - all resources
         for resource in dataset.resources:
             if resource.fs_filename is not None:
                 try:
@@ -93,6 +94,7 @@ def get_queryset(model_cls):
     # special case for resources
     if model_cls.__name__ == "Resource":
         model_cls = getattr(udata_models, "Dataset")
+    # TODO: archived - ????
     params = {}
     attrs = ("private", "deleted", "deleted_at")
     for attr in attrs:
@@ -103,6 +105,7 @@ def get_queryset(model_cls):
 
 def get_resource_for_csv_export_model(model, dataset):
     for resource in dataset.resources:
+        # TODO: archived - non-archived only?
         if resource.extras.get("csv-export:model", "") == model:
             return resource
 
@@ -246,6 +249,7 @@ def bind_tabular_dataservice(self):
         log.error("TABULAR_API_DATASERVICE_ID points to a non existent dataservice")
         return
 
+    # TODO: archived - non-archived only?
     datasets = Dataset.objects(
         **{
             "resources__extras__analysis:parsing:finished_at__exists": True,

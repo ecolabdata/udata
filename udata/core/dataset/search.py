@@ -79,6 +79,7 @@ class DatasetSearch(ModelSearchAdapter):
         of all resources in the dataset.
         """
         families = set()
+        # TODO: archived - non-archived only
         for resource in dataset.resources:
             if resource.format:
                 family = get_format_family(resource.format)
@@ -130,7 +131,9 @@ class DatasetSearch(ModelSearchAdapter):
             "followers": dataset.metrics.get("followers", 0),
             "reuses": dataset.metrics.get("reuses", 0),
             "featured": 1 if dataset.featured else 0,
+            # TODO: archived - non-archived only
             "resources_count": len(dataset.resources),
+            # TODO: archived - non-archived only
             "resources": [
                 {"id": str(res.id), "title": res.title}
                 for res in dataset.resources[:MAX_NUMBER_OF_RESOURCES_TO_INDEX]
@@ -138,7 +141,9 @@ class DatasetSearch(ModelSearchAdapter):
             "organization": organization,
             "organization_name": dataset.organization.name if dataset.organization else None,
             "owner": str(dataset.owner.id) if dataset.owner else None,
+            # TODO: archived - non-archived only
             "format": [r.format.lower() for r in dataset.resources if r.format],
+            # TODO: archived - non-archived only
             "schema": [r.schema.name for r in dataset.resources if r.schema],
             "topics": [str(tid) for tid in topic_ids],
             "access_type": dataset.access_type,

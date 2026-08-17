@@ -191,6 +191,7 @@ class MaafBackend(BaseBackend):
             if metadata.get("territorial_coverage_code"):
                 dataset.spatial.zones = [ZONES[metadata["territorial_coverage_code"]]]
 
+        # TODO: archived - dataset.clear_resources?
         dataset.resources = []
         cle = get_by(metadata["resources"], format="cle")
         for row in metadata["resources"]:
@@ -208,6 +209,7 @@ class MaafBackend(BaseBackend):
                     resource.checksum = Checksum(type="sha256", value=self.get(cle["url"]).text)
                 if row.get("last_modified"):
                     resource.last_modified_internal = row["last_modified"]
+                # TODO: archived - dataset.add_resource?
                 dataset.resources.append(resource)
 
         if metadata.get("author"):

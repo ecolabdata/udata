@@ -186,6 +186,7 @@ def get_export_url(model):
     dataset = Dataset.objects.get_or_404(id=did)
     resource = None
     for r in dataset.resources:
+        # TODO: archived - all or non-archived only?
         if r.extras.get("csv-export:model", "") == model:
             resource = r
             break

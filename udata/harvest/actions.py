@@ -271,6 +271,7 @@ def detach(dataset: Dataset):
     and will no longer be updated or archived by harvesting.
     """
     dataset.harvest = None
+    # TODO: archived - all resources
     for resource in dataset.resources:
         resource.harvest = None
     dataset.save()

@@ -94,6 +94,7 @@ def parse_url(url, csw, iso, quiet=False, rid=""):
             echo("Description: {}".format(yellow(dataset.description)))
             echo("Tags: {}".format(yellow(dataset.tags)))
             echo(
+                # TODO: archived - all or non-archived only?
                 "Resources: {}".format(
                     yellow([(r.title, r.format, r.url) for r in dataset.resources])
                 )

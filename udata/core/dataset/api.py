@@ -221,10 +221,13 @@ class DatasetApiParser(ModelApiParser):
             ]
             datasets = datasets.filter(id__in=ids)
         if args.get("format"):
+            # TODO: archived - non-archived only
             datasets = datasets.filter(resources__format=args["format"])
         if args.get("schema"):
+            # TODO: archived - non-archived only
             datasets = datasets.filter(resources__schema__name=args["schema"])
         if args.get("schema_version"):
+            # TODO: archived - non-archived only
             datasets = datasets.filter(resources__schema__version=args["schema_version"])
         if args.get("access_type"):
             datasets = datasets.filter(access_type=args["access_type"])
@@ -577,6 +580,7 @@ class ResourcesAPI(API):
         """Reorder resources"""
         dataset.permissions["edit_resources"].test()
         resources = request.json
+        # TODO: archived - ignore archived (keep archived at end of list?)
         if len(dataset.resources) != len(resources):
             api.abort(
                 400,
@@ -659,6 +663,7 @@ class UploadNewCommunityResources(UploadMixin, API):
 
 class ResourceMixin(object):
     def get_resource_or_404(self, dataset, id):
+        # TODO: archived - all resources
         resource = get_by(dataset.resources, id=id)
         if not resource:
             api.abort(404, "Resource does not exist")
@@ -682,6 +687,7 @@ class UploadDatasetResource(ResourceMixin, UploadMixin, API):
         """Upload a file related to a given resource on a given dataset"""
         dataset.permissions["edit_resources"].test()
         resource = self.get_resource_or_404(dataset, rid)
+        # TODO: archived - reset
         fs_filename_to_remove = resource.fs_filename
         infos = self.handle_upload(dataset)
         for k, v in infos.items():
@@ -739,6 +745,7 @@ class ResourceAPI(ResourceMixin, API):
         """Update a given resource on a given dataset"""
         dataset.permissions["edit_resources"].test()
         resource = self.get_resource_or_404(dataset, rid)
+        # TODO: archived - reset
         form = api.validate(ResourceFormWithoutId, resource)
 
         # ensure filetype is not modified after creation

@@ -45,8 +45,12 @@ class DatasetCsvAdapter(csv.Adapter):
         ("badges", lambda o: ",".join([badge.kind for badge in o.badges])),
         ("tags", lambda o: ",".join(o.tags)),
         ("archived", lambda o: o.archived or False),
+        # TODO: archived - archived count?
+        # TODO: archived - non-archived only
         ("resources_count", lambda o: len(o.resources)),
+        # TODO: archived - non-archived only
         ("main_resources_count", lambda o: len([r for r in o.resources if r.type == "main"])),
+        # TODO: archived - non-archived only
         ("resources_formats", lambda o: ",".join(set(r.format for r in o.resources if r.format))),
         ("harvest.backend", lambda r: r.harvest and r.harvest.backend),
         ("harvest.domain", lambda r: r.harvest and r.harvest.domain),
@@ -107,5 +111,6 @@ class ResourcesCsvAdapter(csv.NestedAdapter):
         ("schema_version", "schema.version"),
         ("preview_url", lambda o: o.preview_url or None),
         ("extras", lambda o: json.dumps(o.extras, default=str)),
+        # TODO: archived - add field
     )
     attribute = "resources"

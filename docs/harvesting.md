@@ -342,6 +342,7 @@ class RandomBackend(BaseBackend):
 
         # Resources
         for i in range(faker.pyint()):
+            # TODO: archived - dataset.add_resource?
             dataset.resources.append(Resource(
                 title=faker.sentence(),
                 description=faker.text(),

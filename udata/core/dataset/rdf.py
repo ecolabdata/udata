@@ -405,6 +405,7 @@ def dataset_to_rdf(dataset: Dataset, graph: Graph | None = None) -> RdfResource:
         if is_hvd and tag in TAG_TO_EU_HVD_CATEGORIES:
             d.add(DCATAP.hvdCategory, URIRef(TAG_TO_EU_HVD_CATEGORIES[tag]))
 
+    # TODO: archived - non-archived only
     for resource in dataset.resources:
         d.add(DCAT.distribution, resource_to_rdf(resource, dataset, graph, is_hvd))
 
@@ -870,9 +871,11 @@ def resource_from_rdf(graph_or_distrib, dataset=None, is_additionnal=False) -> R
             # the same resource.
             fields["title"] = title
         resource = get_by(dataset.resources, **fields)
+        # TODO: archived - reset
     if not dataset or not resource:
         resource = Resource()
         if dataset:
+            # TODO: archived - dataset.add_resource?
             dataset.resources.append(resource)
 
     resource.filetype = "remote"
@@ -945,6 +948,7 @@ def dataset_from_rdf(
     """
     Create or update a dataset from a RDF/DCAT graph
     """
+    cutoff = datetime.now(UTC)
     dataset = dataset or Dataset()
 
     if node is None:  # Assume first match is the only match
@@ -1070,7 +1074,20 @@ def dataset_from_rdf(
         modified_at, "DCT.modified (dataset)", refuse_future=True
     )
 
+    # FIXME: here, dataset_from_rdf call site, base.autoarchive, ...?
+    clean_stale_resources(dataset, cutoff)
+
     return dataset
+
+
+def clean_stale_resources(dataset: Dataset, cutoff: datetime):
+    # TODO: archived - non-archived only
+    for resource in dataset.resources:
+        if not resource.harvest.last_update:
+            continue
+        if resource.harvest.last_update >= cutoff:
+            continue
+        dataset.archive_resource(resource)
 
 
 def bbox_to_geojson_multipolygon(bbox_as_str: str) -> dict | None:
